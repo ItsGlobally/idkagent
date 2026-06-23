@@ -164,8 +164,13 @@ const DEFAULT_CONFIG: AgentConfig = {
 
 // ─── Config File Path ────────────────────────────────────────
 
+/** Returns the data root directory (parent of the repo root) */
+export function getDataDir(): string {
+  return path.resolve(process.cwd(), '..');
+}
+
 function getConfigPath(): string {
-  return path.resolve('config.yml');
+  return path.resolve(getDataDir(), 'config.yml');
 }
 
 // ─── Deep Merge Helper ───────────────────────────────────────

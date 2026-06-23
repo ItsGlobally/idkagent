@@ -33,11 +33,12 @@ curl -fsSL https://raw.githubusercontent.com/ItsGlobally/idkagent/main/install.s
 ```
 
 This will:
-1. Clone the repository to `~/.idkagent`
-2. Install npm dependencies
-3. Build the project
-4. Create a default configuration
-5. Install the `idkagent` wrapper command into your PATH
+1. Create `~/.idkagent/` as the data root directory
+2. Clone the repository to `~/.idkagent/idkagent/`
+3. Install npm dependencies
+4. Build the project
+5. Create a default configuration
+6. Install the `idkagent` wrapper command into your PATH
 
 After installation, **restart your shell** or run `source ~/.bashrc`, then:
 
@@ -52,7 +53,7 @@ git clone https://github.com/ItsGlobally/idkagent.git
 cd idkagent
 npm install
 npm run build
-./install.sh
+./install.sh        # Creates ~/.idkagent/ and sets up everything
 ```
 
 ### Configuration
@@ -175,7 +176,7 @@ idkagent comes with a rich set of built-in tools that the AI can autonomously in
 
 ### Credential Vault
 
-Sensitive values (API keys, tokens) are stored encrypted at rest in `credentials/secrets.json` (at the project root):
+Sensitive values (API keys, tokens) are stored encrypted at rest in `credentials/secrets.json` (in the data root `~/.idkagent/`):
 
 ```bash
 # In CLI chat, tell the agent:
@@ -229,17 +230,9 @@ idkagent/
 │       └── java_index_trigger.ts # Java index trigger tool
 ├── install.sh                # One-command install & PATH setup
 ├── idkagent-wrapper.sh       # Global wrapper script (resolves symlinks)
-├── config.yml                # Configuration (API keys, models, gateways)
 ├── tsconfig.json
 ├── package.json
-├── workspace/                # Default working directory (user projects)
-├── .sessions/                # Session history files (auto-managed)
-├── credentials/              # Credential vault
-│   └── secrets.json          # Encrypted credential file
-├── AGENT.md                  # Injected into system prompt (optional)
-├── SOUL.md                   # Injected into system prompt (optional)
-├── MEMORY.md                 # Permanent agent memory (via update_memory tool)
-├── projects.json             # Registered development projects
+└── dist/                     # Compiled JavaScript
 ```
 
 ### Agent Loop Flow
@@ -419,14 +412,22 @@ Both Gemini and OpenAI-compatible providers feature exponential backoff with jit
 
 ### Session Persistence
 
-Conversation sessions are saved to `.sessions/<id>.json` (at the project root) and survive restarts. System prompts are never persisted — they are regenerated fresh on each load.
+Conversation sessions are saved to `.sessions/<id>.json` (in the data root `~/.idkagent/`) and survive restarts. System prompts are never persisted — they are regenerated fresh on each load.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-idkagent/                         # Project root (~/.idkagent/)
+~/.idkagent/                      # Data root directory
+├── idkagent/                     # Git repository (source code)
+│   ├── src/                      # TypeScript source code
+│   ├── dist/                     # Compiled JavaScript
+│   ├── install.sh                # Installation script
+│   ├── idkagent-wrapper.sh       # Global wrapper script
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── ...
 ├── .sessions/                    # Session history files (auto-managed)
 ├── credentials/
 │   └── secrets.json              # Encrypted credential vault
@@ -436,9 +437,7 @@ idkagent/                         # Project root (~/.idkagent/)
 ├── SOUL.md                       # Injected into system prompt (optional)
 ├── MEMORY.md                     # Permanent agent memory (via update_memory tool)
 ├── projects.json                 # Registered development projects
-├── config.yml                    # Configuration file
-├── install.sh                    # Installation script
-└── ...                           # Source code and other files
+└── config.yml                    # Configuration file
 ```
 
 ---

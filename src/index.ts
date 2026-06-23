@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import yaml from 'yaml';
-import { loadConfig, saveDefaultConfig, updateConfig, showConfig, providersToFile, type AgentConfig } from './config.js';
+import { loadConfig, saveDefaultConfig, updateConfig, showConfig, providersToFile, getDataDir, type AgentConfig } from './config.js';
 import { createProvider } from './providers/index.js';
 import { getAllTools } from './tools/index.js';
 import { createGateways, CLIGateway } from './gateways/index.js';
@@ -388,7 +388,7 @@ async function runGatewaySetup(rl: readline.Interface, config: AgentConfig): Pro
 
 async function runSetup(): Promise<void> {
   const rl = createRL();
-  const configPath = path.resolve('config.yml');
+  const configPath = path.resolve(getDataDir(), 'config.yml');
 
   console.log(`\n${CYAN}${BOLD}╔══════════════════════════════════════════╗${RESET}`);
   console.log(`${CYAN}${BOLD}║     🔧 idkagent Setup Wizard v1.0       ║${RESET}`);
@@ -472,7 +472,7 @@ async function runSetup(): Promise<void> {
   console.log(`\n${BOLD}🚀 Next steps:${RESET}`);
   console.log(`  ${DIM}1.${RESET} Start chatting:  ${CYAN}idkagent chat${RESET}`);
   console.log(`  ${DIM}2.${RESET} Start Discord:   ${CYAN}idkagent gateway start${RESET}`);
-  console.log(`  ${DIM}3.${RESET} Edit config:     ${CYAN}nano config.yml${RESET}`);
+  console.log(`  ${DIM}3.${RESET} Edit config:     ${CYAN}nano ${path.resolve(getDataDir(), 'config.yml')}${RESET}`);
   console.log(`  ${DIM}4.${RESET} View config:     ${CYAN}idkagent config show${RESET}\n`);
 }
 
@@ -526,7 +526,7 @@ async function main(): Promise<void> {
           
           console.log(`\n${GREEN}✅ Updated main model to: ${selectedModel} (via ${providerName})${RESET}`);
           if (await promptYN(rl, `\n  Save to config.yml?`, true)) {
-            saveConfig(config, path.resolve('config.yml'));
+            saveConfig(config, path.resolve(getDataDir(), 'config.yml'));
           }
         }
         
@@ -545,7 +545,7 @@ async function main(): Promise<void> {
         console.log(`\n${CYAN}${BOLD}╔══════════════════════════════════════════╗${RESET}`);
         console.log(`${CYAN}${BOLD}║        🌐 Gateway Configuration          ║${RESET}`);
         console.log(`${CYAN}${BOLD}╚══════════════════════════════════════════╝${RESET}`);
-        const configPath = path.resolve('config.yml');
+        const configPath = path.resolve(getDataDir(), 'config.yml');
         await runGatewaySetup(rl, config);
         showSummary(config);
         if (await promptYN(rl, `\n  Save to config.yml?`, true)) {

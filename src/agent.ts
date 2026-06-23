@@ -129,7 +129,7 @@ export class Agent {
     
     const readOptionalFile = (filename: string) => {
       try {
-        const filepath = path.resolve(process.cwd(), filename);
+        const filepath = path.resolve(process.cwd(), '..', filename);
         if (fs.existsSync(filepath)) {
           const label = filename.replace('.md', '').toUpperCase();
           return `\n\n=== ${label} ===\n` + fs.readFileSync(filepath, 'utf-8');
@@ -175,7 +175,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       let messages: Message[] = [];
 
       if (!this.isEphemeral) {
-        const sessionsDir = path.resolve(process.cwd(), '.sessions');
+        const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
         const sessionFile = path.join(sessionsDir, `${sessionId}.json`);
         if (fs.existsSync(sessionFile)) {
           try {
@@ -198,7 +198,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   private saveSession(sessionId: string): void {
     if (this.isEphemeral) return;
 
-    const sessionsDir = path.resolve(process.cwd(), '.sessions');
+    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
     if (!fs.existsSync(sessionsDir)) {
       fs.mkdirSync(sessionsDir, { recursive: true });
     }
@@ -355,7 +355,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   /** Clear a session's history */
   clearSession(sessionId: string): void {
     this.sessions.delete(sessionId);
-    const sessionFile = path.resolve(process.cwd(), '.sessions', `${sessionId}.json`);
+    const sessionFile = path.resolve(process.cwd(), '..', '.sessions', `${sessionId}.json`);
     if (fs.existsSync(sessionFile)) {
       fs.unlinkSync(sessionFile);
     }
@@ -413,7 +413,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     }
 
     if (contentTrimmed === '/resetmemory') {
-      const memoryPath = path.resolve(process.cwd(), 'MEMORY.md');
+      const memoryPath = path.resolve(process.cwd(), '..', 'MEMORY.md');
       if (fs.existsSync(memoryPath)) {
         fs.unlinkSync(memoryPath);
       }

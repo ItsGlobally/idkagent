@@ -4,7 +4,7 @@ import type { Tool } from './types.js';
 
 // Credentials are stored in credentials/secrets.json
 function getCredentialsPath(): string {
-  return resolve(process.cwd(), 'credentials', 'secrets.json');
+  return resolve(process.cwd(), '..', 'credentials', 'secrets.json');
 }
 
 function readSecrets(): Record<string, string> {

@@ -9,6 +9,7 @@ set -euo pipefail
 
 REPO="https://github.com/ItsGlobally/idkagent.git"
 BRANCH="main"
+REPO_DIRNAME="idkagent"
 
 # ─── Colors ────────────────────────────────────────────────────
 
@@ -56,24 +57,24 @@ check_prereqs() {
 # ─── Clone / Update Repository ────────────────────────────────
 
 setup_repo() {
-  local target_dir="$1"
+  local repo_dir="$1"
 
-  if [[ -d "$target_dir/.git" ]]; then
-    step "Updating existing repository in ${target_dir}..."
-    cd "$target_dir"
+  if [[ -d "$repo_dir/.git" ]]; then
+    step "Updating existing repository in ${repo_dir}..."
+    cd "$repo_dir"
     git fetch origin "$BRANCH"
     git checkout "$BRANCH"
     git pull origin "$BRANCH"
     log "Repository updated to latest commit."
   else
-    step "Cloning idkagent into ${target_dir}..."
-    if [[ -d "$target_dir" ]]; then
-      warn "Directory ${target_dir} already exists but is not a git repository."
+    step "Cloning idkagent into ${repo_dir}..."
+    if [[ -d "$repo_dir" ]]; then
+      warn "Directory ${repo_dir} already exists but is not a git repository."
       echo "  Either remove it, specify a different path with --dir, or run the script inside the project."
       exit 1
     fi
-    git clone --branch "$BRANCH" "$REPO" "$target_dir"
-    cd "$target_dir"
+    git clone --branch "$BRANCH" "$REPO" "$repo_dir"
+    cd "$repo_dir"
     log "Repository cloned."
   fi
 }
@@ -89,18 +90,25 @@ install_deps() {
 # ─── Initialize Configuration ─────────────────────────────────
 
 init_config() {
-  step "Setting up configuration..."
+  local data_dir="$1"
+  local repo_dir="$2"
 
-  if [[ -f config.yml ]]; then
-    warn "config.yml already exists. Skipping initialization."
+  if [[ -f "$data_dir/config.yml" ]]; then
+    warn "config.yml already exists at ${data_dir}/config.yml. Skipping initialization."
     info "  Edit config.yml to set your API keys if needed."
     return
   fi
 
+  # Run config init from the repo dir (it creates config in parent data dir)
+  cd "$repo_dir"
   npx tsx src/index.ts config init 2>/dev/null || true
 
+  # If config.yml was created in the repo dir, move it to the data dir
   if [[ -f config.yml ]]; then
-    log "Default config.yml created."
+    mv config.yml "$data_dir/config.yml"
+    log "Default config.yml created at ${data_dir}/config.yml."
+  elif [[ -f "$data_dir/config.yml" ]]; then
+    log "Default config.yml created at ${data_dir}/config.yml."
   else
     warn "Could not generate config.yml automatically."
   fi
@@ -116,11 +124,13 @@ init_config() {
 # ─── Setup Data Directories ───────────────────────────────────
 
 setup_dirs() {
-  step "Setting up data directories..."
-  mkdir -p .sessions credentials
-  touch credentials/secrets.json 2>/dev/null || true
-  touch MEMORY.md AGENT.md SOUL.md 2>/dev/null || true
-  log "Data directories ready at project root."
+  local data_dir="$1"
+
+  step "Setting up data directories in ${data_dir}..."
+  mkdir -p "$data_dir/.sessions" "$data_dir/credentials"
+  touch "$data_dir/credentials/secrets.json" 2>/dev/null || true
+  touch "$data_dir/MEMORY.md" "$data_dir/AGENT.md" "$data_dir/SOUL.md" 2>/dev/null || true
+  log "Data directories ready at ${data_dir}."
 }
 
 # ─── Build Project ────────────────────────────────────────────
@@ -133,7 +143,7 @@ build_project() {
 # ─── Install Wrapper into PATH ────────────────────────────────
 
 install_wrapper() {
-  local project_dir="$1"
+  local repo_dir="$1"
 
   step "Installing 'idkagent' wrapper into PATH..."
 
@@ -148,7 +158,7 @@ install_wrapper() {
     bin_dir="$HOME/bin"
   fi
 
-  local wrapper_src="$project_dir/idkagent-wrapper.sh"
+  local wrapper_src="$repo_dir/idkagent-wrapper.sh"
   local wrapper_dst="$bin_dir/idkagent"
 
   if [[ ! -f "$wrapper_src" ]]; then
@@ -197,14 +207,16 @@ add_to_path() {
 # ─── Show Usage / Completion Message ──────────────────────────
 
 show_usage() {
-  local dir="$1"
+  local data_dir="$1"
+  local repo_dir="$2"
   printf "\n"
   printf "${MAGENTA}${BOLD}╔═══════════════════════════════════════════╗${RESET}\n"
   printf "${MAGENTA}${BOLD}║     🎉 idkagent installation complete!   ║${RESET}\n"
   printf "${MAGENTA}${BOLD}╚═══════════════════════════════════════════╝${RESET}\n"
   printf "\n"
 
-  printf "${BOLD}📂 Project Location:${RESET} ${dir}\n"
+  printf "${BOLD}📂 Data Directory:${RESET} ${data_dir}\n"
+  printf "${BOLD}📂 Repository:${RESET}     ${repo_dir}\n"
   printf "\n"
 
   printf "${BOLD}🚀 Quick Start:${RESET}\n"
@@ -214,11 +226,8 @@ show_usage() {
   printf "  idkagent gateway start\n"
   printf "  idkagent help\n"
   printf "\n"
-  printf "  ${CYAN}# Or use npm scripts inside the project directory${RESET}\n"
-  printf "  cd %s\n" "$dir"
-  printf "\n"
   printf "  ${CYAN}# Edit the configuration (set your API keys)${RESET}\n"
-  printf "  nano %s/config.yml\n" "$dir"
+  printf "  nano %s/config.yml\n" "$data_dir"
   printf "\n"
   printf "  ${CYAN}# Specify a Gemini provider${RESET}\n"
   printf "  idkagent chat --provider gemini --model gemini-2.5-flash\n"
@@ -233,7 +242,7 @@ show_usage() {
   printf "  ${DIM}idkagent help              ${RESET}  Show help message\n"
   printf "\n"
 
-  printf "${BOLD}⚙️  Config Location:${RESET} %s/config.yml\n" "$dir"
+  printf "${BOLD}⚙️  Config Location:${RESET} %s/config.yml\n" "$data_dir"
   printf "${BOLD}🔗  Wrapper Location:${RESET} ~/.local/bin/idkagent\n"
   printf "\n"
 }
@@ -242,17 +251,17 @@ show_usage() {
 
 main() {
   printf "${CYAN}${BOLD}╔═══════════════════════════════════════════╗${RESET}\n"
-  printf "${CYAN}${BOLD}║      🤖 idkagent Install Script v1.1     ║${RESET}\n"
+  printf "${CYAN}${BOLD}║      🤖 idkagent Install Script v1.2     ║${RESET}\n"
   printf "${CYAN}${BOLD}╚═══════════════════════════════════════════╝${RESET}\n"
   printf "\n"
 
   # Parse arguments
-  local target_dir=""
+  local base_dir=""
   local no_path=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dir)
-        target_dir="$2"
+        base_dir="$2"
         shift 2
         ;;
       --no-path)
@@ -271,34 +280,47 @@ main() {
     esac
   done
 
-  # Determine target directory
-  if [[ -z "$target_dir" ]]; then
-    # If already inside an idkagent git repo, use current directory
+  # Determine directories
+  #  base_dir  = data root (e.g. ~/.idkagent/)
+  #  repo_dir  = git clone location (e.g. ~/.idkagent/idkagent/)
+  local repo_dir=""
+
+  if [[ -z "$base_dir" ]]; then
+    # If already inside an idkagent git repo, use parent as base
     if [[ -d ".git" ]] && git remote get-url origin 2>/dev/null | grep -q "idkagent" 2>/dev/null; then
-      target_dir="$(pwd)"
-      info "Detected existing idkagent repository at ${target_dir}"
+      base_dir="$(cd .. && pwd)"
+      repo_dir="$(pwd)"
+      info "Detected existing idkagent repository at ${repo_dir}"
     else
-      target_dir="$HOME/.idkagent"
+      base_dir="$HOME/.idkagent"
+      repo_dir="$base_dir/$REPO_DIRNAME"
     fi
+  else
+    repo_dir="$base_dir/$REPO_DIRNAME"
   fi
 
   check_prereqs
-  setup_repo "$target_dir"
+  setup_repo "$repo_dir"
+
+  # Run npm install and build from the repo dir
+  cd "$repo_dir"
   install_deps
-  init_config
-  setup_dirs
   build_project
 
+  # Setup data directories in the base dir
+  setup_dirs "$base_dir"
+  init_config "$base_dir" "$repo_dir"
+
   if [[ "$no_path" == false ]]; then
-    install_wrapper "$target_dir"
+    install_wrapper "$repo_dir"
   else
     info "Skipping PATH setup (--no-path)."
     info "  To manually install the wrapper:"
-    info "    ln -sf ${target_dir}/idkagent-wrapper.sh ~/.local/bin/idkagent"
+    info "    ln -sf ${repo_dir}/idkagent-wrapper.sh ~/.local/bin/idkagent"
     info "    export PATH=\"\$PATH:~/.local/bin\""
   fi
 
-  show_usage "$target_dir"
+  show_usage "$base_dir" "$repo_dir"
 }
 
 main "$@"

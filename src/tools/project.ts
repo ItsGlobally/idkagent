@@ -36,7 +36,7 @@ function normalizeLanguage(raw: string): ProjectLanguage {
 // ─── Registry I/O ──────────────────────────────────────────────
 
 export function getProjectsFilePath(): string {
-  return resolve(process.cwd(), 'projects.json');
+  return resolve(process.cwd(), '..', 'projects.json');
 }
 
 export function readRegistry(): ProjectRegistry {
@@ -139,8 +139,8 @@ export const projectTool: Tool = {
       const projectPath: string = rawPath
         ? isAbsolute(rawPath)
           ? rawPath
-          : resolve(process.cwd(), 'workspace', rawPath)
-        : resolve(process.cwd(), 'workspace', name);
+          : resolve(process.cwd(), '..', 'workspace', rawPath)
+        : resolve(process.cwd(), '..', 'workspace', name);
 
       if (action === 'create') {
         mkdirSync(projectPath, { recursive: true });
@@ -181,7 +181,7 @@ export const projectTool: Tool = {
 
       const rawPath = args.path as string | undefined;
       if (rawPath) {
-        entry.path = isAbsolute(rawPath) ? rawPath : resolve(process.cwd(), 'workspace', rawPath);
+        entry.path = isAbsolute(rawPath) ? rawPath : resolve(process.cwd(), '..', 'workspace', rawPath);
       }
 
       writeRegistry(registry);

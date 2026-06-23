@@ -564,8 +564,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
           let text = response.content || '[Tool calls are disabled in pure chat mode.]';
           const usage = this.usageMap.get(message.sessionId);
           if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
-            const total = usage.promptTokens + usage.completionTokens;
-            text += `\n\n---\n*🧮 ${total.toLocaleString()} tokens total (↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()})*`;
+            text += `\n-# ${this.config.models.main.model} · ↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()}`;
           }
           onEvent({ type: 'text', content: text });
           messages.push({ role: 'assistant', content: text });
@@ -651,8 +650,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       // Append token usage info
       const usage = this.usageMap.get(message.sessionId);
       if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
-        const total = usage.promptTokens + usage.completionTokens;
-        text += `\n\n---\n*🧮 ${total.toLocaleString()} tokens total (↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()})*`;
+        text += `\n-# ${this.config.models.main.model} · ↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()}`;
       }
       onEvent({ type: 'text', content: text });
 

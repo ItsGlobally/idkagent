@@ -9,4 +9,9 @@ package-lock.json
 config.json
 config.yml
 workspace/
+.sessions/
+credentials/
+projects.json
 MEMORY.md
+AGENT.md
+SOUL.md

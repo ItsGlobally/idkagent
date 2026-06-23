@@ -36,7 +36,7 @@ function normalizeLanguage(raw: string): ProjectLanguage {
 // ─── Registry I/O ──────────────────────────────────────────────
 
 export function getProjectsFilePath(): string {
-  return resolve(process.cwd(), 'workspace', 'projects.json');
+  return resolve(process.cwd(), 'projects.json');
 }
 
 export function readRegistry(): ProjectRegistry {
@@ -60,7 +60,7 @@ function writeRegistry(registry: ProjectRegistry): void {
 export const projectTool: Tool = {
   name: 'project',
   description: [
-    'Manage development projects registered in workspace/projects.json.',
+    'Manage development projects registered in projects.json.',
     '',
     'Actions:',
     '  create <name> <language>  — Create a new project folder in workspace/ and register it.',

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─── idkagent 安裝腳本 ─────────────────────────────────────────
-# 用法:
+# ─── idkagent Installation Script ──────────────────────────────
+# Usage:
 #   curl -fsSL https://raw.githubusercontent.com/ItsGlobally/idkagent/main/install.sh | bash
-#   或
+#   or
 #   ./install.sh [--dir <path>] [--no-path]
 
 REPO="https://github.com/ItsGlobally/idkagent.git"
 BRANCH="main"
 
-# ─── 顏色 ─────────────────────────────────────────────────────
+# ─── Colors ────────────────────────────────────────────────────
 
 RESET='\033[0m'
 BOLD='\033[1m'
@@ -27,7 +27,7 @@ err()  { printf "${RED}✗${RESET} %s\n" "$1"; }
 step() { printf "\n${CYAN}${BOLD}▶ %s${RESET}\n" "$1"; }
 info() { printf "${DIM}%s${RESET}\n" "$1"; }
 
-# ─── 前置檢查 ─────────────────────────────────────────────────
+# ─── Prerequisites Check ──────────────────────────────────────
 
 check_prereqs() {
   step "Checking prerequisites..."
@@ -53,7 +53,7 @@ check_prereqs() {
   fi
 }
 
-# ─── 取得/更新程式碼 ──────────────────────────────────────────
+# ─── Clone / Update Repository ────────────────────────────────
 
 setup_repo() {
   local target_dir="$1"
@@ -78,7 +78,7 @@ setup_repo() {
   fi
 }
 
-# ─── 安裝依賴 ─────────────────────────────────────────────────
+# ─── Install Dependencies ─────────────────────────────────────
 
 install_deps() {
   step "Installing npm dependencies..."
@@ -86,7 +86,7 @@ install_deps() {
   log "Dependencies installed."
 }
 
-# ─── 初始化設定檔 ─────────────────────────────────────────────
+# ─── Initialize Configuration ─────────────────────────────────
 
 init_config() {
   step "Setting up configuration..."
@@ -102,7 +102,6 @@ init_config() {
   if [[ -f config.yml ]]; then
     log "Default config.yml created."
   else
-    # 若 config init 沒有輸出名稱 config.yml，手動建立
     warn "Could not generate config.yml automatically."
   fi
 
@@ -111,38 +110,40 @@ init_config() {
   info "    • API keys and models"
   info "    • Discord bot token (if using Discord gateway)"
   info "    • Logging preferences"
+  info "    • Web search provider"
 }
 
-# ─── 建立 workspace 目錄 ──────────────────────────────────────
+# ─── Setup Data Directories ───────────────────────────────────
 
-setup_workspace() {
-  step "Setting up workspace..."
-  mkdir -p workspace/.sessions workspace/credentials
-  touch workspace/credentials/secrets.json 2>/dev/null || true
-  log "Workspace directories ready."
+setup_dirs() {
+  step "Setting up data directories..."
+  mkdir -p .sessions credentials
+  touch credentials/secrets.json 2>/dev/null || true
+  touch MEMORY.md AGENT.md SOUL.md 2>/dev/null || true
+  log "Data directories ready at project root."
 }
 
-# ─── 編譯 ─────────────────────────────────────────────────────
+# ─── Build Project ────────────────────────────────────────────
 
 build_project() {
   step "Building project..."
   npm run build 2>/dev/null && log "Build successful." || warn "Build failed — you can still run with 'npm run dev'."
 }
 
-# ─── 安裝 Wrapper 到 PATH ────────────────────────────────────
+# ─── Install Wrapper into PATH ────────────────────────────────
 
 install_wrapper() {
   local project_dir="$1"
 
   step "Installing 'idkagent' wrapper into PATH..."
 
-  # 目標目錄：優先 ~/.local/bin，fallback ~/bin
+  # Prefer ~/.local/bin, fallback to ~/bin
   local bin_dir="$HOME/.local/bin"
   if [[ ! -d "$bin_dir" ]]; then
     mkdir -p "$bin_dir"
   fi
 
-  # 如果 ~/bin 存在且 ~/.local/bin 不在 PATH 中，改用 ~/bin
+  # If ~/bin exists and ~/.local/bin is not in PATH, use ~/bin instead
   if [[ -d "$HOME/bin" ]] && ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
     bin_dir="$HOME/bin"
   fi
@@ -159,16 +160,16 @@ install_wrapper() {
   ln -sf "$wrapper_src" "$wrapper_dst"
   log "Wrapper linked: ${wrapper_dst} → ${wrapper_src}"
 
-  # 確保目標目錄在 PATH 中
+  # Ensure the target directory is in PATH
   add_to_path "$bin_dir"
 }
 
-# ─── 確保目錄在 PATH ──────────────────────────────────────────
+# ─── Ensure Directory is in PATH ──────────────────────────────
 
 add_to_path() {
   local dir="$1"
 
-  # 如果已經在 PATH 中則跳過
+  # Skip if already in PATH
   if echo "$PATH" | tr ':' '\n' | grep -qx "$dir"; then
     return
   fi
@@ -180,7 +181,7 @@ add_to_path() {
   esac
 
   if [[ -n "$shell_config" ]]; then
-    # 避免重複添加
+    # Avoid duplicate entries
     if ! grep -q "export PATH=\"\$PATH:$dir\"" "$shell_config" 2>/dev/null; then
       printf "\n# Added by idkagent install script\n" >> "$shell_config"
       printf "export PATH=\"\$PATH:%s\"\n" "$dir" >> "$shell_config"
@@ -193,59 +194,59 @@ add_to_path() {
   fi
 }
 
-# ─── 顯示使用說明 ─────────────────────────────────────────────
+# ─── Show Usage / Completion Message ──────────────────────────
 
 show_usage() {
   local dir="$1"
   printf "\n"
   printf "${MAGENTA}${BOLD}╔═══════════════════════════════════════════╗${RESET}\n"
-  printf "${MAGENTA}${BOLD}║       🎉 idkagent 安裝完成！             ║${RESET}\n"
+  printf "${MAGENTA}${BOLD}║     🎉 idkagent installation complete!   ║${RESET}\n"
   printf "${MAGENTA}${BOLD}╚═══════════════════════════════════════════╝${RESET}\n"
   printf "\n"
 
-  printf "${BOLD}📂 專案位置:${RESET} ${dir}\n"
+  printf "${BOLD}📂 Project Location:${RESET} ${dir}\n"
   printf "\n"
 
-  printf "${BOLD}🚀 快速開始:${RESET}\n"
+  printf "${BOLD}🚀 Quick Start:${RESET}\n"
   printf "\n"
-  printf "  ${CYAN}# 從任意位置執行 idkagent${RESET}\n"
+  printf "  ${CYAN}# Run idkagent from anywhere${RESET}\n"
   printf "  idkagent chat\n"
   printf "  idkagent gateway start\n"
   printf "  idkagent help\n"
   printf "\n"
-  printf "  ${CYAN}# 或在專案目錄內用 npm 腳本${RESET}\n"
+  printf "  ${CYAN}# Or use npm scripts inside the project directory${RESET}\n"
   printf "  cd %s\n" "$dir"
   printf "\n"
-  printf "  ${CYAN}# 編輯設定檔 (填入你的 API Key)${RESET}\n"
+  printf "  ${CYAN}# Edit the configuration (set your API keys)${RESET}\n"
   printf "  nano %s/config.yml\n" "$dir"
   printf "\n"
-  printf "  ${CYAN}# 指定 Gemini 提供者${RESET}\n"
+  printf "  ${CYAN}# Specify a Gemini provider${RESET}\n"
   printf "  idkagent chat --provider gemini --model gemini-2.5-flash\n"
   printf "\n"
 
-  printf "${BOLD}📋 可用命令:${RESET}\n"
+  printf "${BOLD}📋 Available Commands:${RESET}\n"
   printf "\n"
-  printf "  ${DIM}idkagent chat              ${RESET} 啟動 CLI 互動模式\n"
-  printf "  ${DIM}idkagent gateway start     ${RESET} 啟動 Discord 閘道\n"
-  printf "  ${DIM}idkagent config init       ${RESET} 建立預設設定檔\n"
-  printf "  ${DIM}idkagent config show       ${RESET} 顯示當前設定\n"
-  printf "  ${DIM}idkagent help              ${RESET} 顯示幫助\n"
+  printf "  ${DIM}idkagent chat              ${RESET}  Start interactive CLI chat\n"
+  printf "  ${DIM}idkagent gateway start     ${RESET}  Start Discord bot gateway\n"
+  printf "  ${DIM}idkagent config init       ${RESET}  Create default config.yml\n"
+  printf "  ${DIM}idkagent config show       ${RESET}  Display current configuration\n"
+  printf "  ${DIM}idkagent help              ${RESET}  Show help message\n"
   printf "\n"
 
-  printf "${BOLD}⚙️  設定檔位置:${RESET} %s/config.yml\n" "$dir"
-  printf "${BOLD}🔗  Wrapper 位置:${RESET} ~/.local/bin/idkagent\n"
+  printf "${BOLD}⚙️  Config Location:${RESET} %s/config.yml\n" "$dir"
+  printf "${BOLD}🔗  Wrapper Location:${RESET} ~/.local/bin/idkagent\n"
   printf "\n"
 }
 
-# ─── 主程式 ───────────────────────────────────────────────────
+# ─── Main ─────────────────────────────────────────────────────
 
 main() {
   printf "${CYAN}${BOLD}╔═══════════════════════════════════════════╗${RESET}\n"
-  printf "${CYAN}${BOLD}║        🤖 idkagent 安裝腳本 v1.0        ║${RESET}\n"
+  printf "${CYAN}${BOLD}║      🤖 idkagent Install Script v1.1     ║${RESET}\n"
   printf "${CYAN}${BOLD}╚═══════════════════════════════════════════╝${RESET}\n"
   printf "\n"
 
-  # 解析參數
+  # Parse arguments
   local target_dir=""
   local no_path=false
   while [[ $# -gt 0 ]]; do
@@ -270,14 +271,14 @@ main() {
     esac
   done
 
-  # 決定安裝目錄
+  # Determine target directory
   if [[ -z "$target_dir" ]]; then
-    # 如果已經在 idkagent 目錄內且有 .git，視為已安裝
+    # If already inside an idkagent git repo, use current directory
     if [[ -d ".git" ]] && git remote get-url origin 2>/dev/null | grep -q "idkagent" 2>/dev/null; then
       target_dir="$(pwd)"
       info "Detected existing idkagent repository at ${target_dir}"
     else
-      target_dir="$HOME/idkagent"
+      target_dir="$HOME/.idkagent"
     fi
   fi
 
@@ -285,7 +286,7 @@ main() {
   setup_repo "$target_dir"
   install_deps
   init_config
-  setup_workspace
+  setup_dirs
   build_project
 
   if [[ "$no_path" == false ]]; then

@@ -15,7 +15,7 @@ export const updateMemoryTool: Tool = {
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const content = args.content as string;
-    const memoryPath = path.resolve(process.cwd(), 'workspace', 'MEMORY.md');
+    const memoryPath = path.resolve(process.cwd(), 'MEMORY.md');
     
     let existing = '';
     if (fs.existsSync(memoryPath)) {

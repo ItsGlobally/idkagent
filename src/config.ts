@@ -80,6 +80,8 @@ export interface AgentConfig {
   logging: LoggingConfig;
   lsp: LspConfig;
   search: SearchConfig;
+  /** When true, all tool calls are disabled — agent becomes a pure chat bot */
+  disableTool: boolean;
 }
 
 // ─── Defaults ────────────────────────────────────────────────
@@ -157,6 +159,7 @@ const DEFAULT_CONFIG: AgentConfig = {
     provider: 'gemini',
     model: 'gemini-2.5-flash-lite',
   },
+  disableTool: false,
 };
 
 // ─── Config File Path ────────────────────────────────────────

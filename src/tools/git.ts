@@ -16,7 +16,7 @@ function getDefaultCwd(): string {
 // Read git_token and git_username from the credential store silently
 function readGitCredentials(): { username: string; token: string } | null {
   try {
-    const credPath = resolve(process.cwd(), 'workspace', 'credentials', 'secrets.json');
+    const credPath = resolve(process.cwd(), 'credentials', 'secrets.json');
     if (!existsSync(credPath)) return null;
     const secrets = JSON.parse(readFileSync(credPath, 'utf-8')) as Record<string, string>;
     const token = secrets['git_token'];

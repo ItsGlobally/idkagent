@@ -2,9 +2,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import type { Tool } from './types.js';
 
-// Credentials are stored in workspace/credentials/secrets.json
+// Credentials are stored in credentials/secrets.json
 function getCredentialsPath(): string {
-  return resolve(process.cwd(), 'workspace', 'credentials', 'secrets.json');
+  return resolve(process.cwd(), 'credentials', 'secrets.json');
 }
 
 function readSecrets(): Record<string, string> {
@@ -27,7 +27,7 @@ function writeSecrets(secrets: Record<string, string>): void {
 export const credentialTool: Tool = {
   name: 'credential',
   description: [
-    'Manage named credentials (API keys, tokens, passwords) stored securely in workspace/credentials/secrets.json.',
+    'Manage named credentials (API keys, tokens, passwords) stored securely in credentials/secrets.json.',
     'Usage:',
     '  get <name>  — Retrieve the value of a stored credential.',
     '  set <name>  — Store or update a credential value.',

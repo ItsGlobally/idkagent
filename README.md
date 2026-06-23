@@ -1,4 +1,3 @@
-
 <p align="center">
   <img src="https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript" alt="TypeScript">
   <img src="https://img.shields.io/badge/Node.js-22+-green?logo=node.js" alt="Node.js">
@@ -16,7 +15,7 @@
 
 - **Multi-Provider Support** — Gemini, OpenAI-compatible APIs (OpenRouter, OpenCode, etc.), with automatic fallback
 - **Dual Interface** — Interactive CLI chat and full Discord bot integration (slash commands, @mentions, buttons)
-- **Rich Tool System** — File I/O, git, shell commands, credentials vault, project management, LSP diagnostics, and more
+- **Rich Tool System** — File I/O, git, shell commands, credentials vault, project management, LSP diagnostics, web search, and more
 - **Agentic Loop** — Autonomous reasoning, tool selection, execution, and multi-step problem solving
 - **Safety** — Configurable guardrail provider, credential masking, prompt injection detection
 - **Sub-Agent Delegation** — Parallel task execution with up to 5 concurrent sub-agents
@@ -34,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/ItsGlobally/idkagent/main/install.s
 ```
 
 This will:
-1. Clone the repository to `~/idkagent`
+1. Clone the repository to `~/.idkagent`
 2. Install npm dependencies
 3. Build the project
 4. Create a default configuration
@@ -69,6 +68,7 @@ The configuration file supports:
 - **Main & fallback models** for redundancy
 - **Guardrail provider** for content safety
 - **Discord bot token** and allowed channels
+- **Web search provider** (Google via Gemini)
 - **Logging preferences** (show thinking, tool calls, results)
 
 You can also override providers at runtime:
@@ -99,6 +99,7 @@ idkagent chat --provider gemini --model gemini-2.5-flash
 | `--provider <name>` | Override LLM provider |
 | `--model <name>` | Override model name |
 | `--gateway <name>` | Override gateway (`cli` / `discord`) |
+| `--search` | Enable or disable web search (default: from config) |
 
 ### CLI Chat
 
@@ -111,6 +112,9 @@ idkagent chat --provider openrouter --model deepseek/deepseek-r1
 
 # Chat with Gemini
 idkagent chat --provider gemini --model gemini-2.5-flash
+
+# Enable web search
+idkagent chat --search true
 ```
 
 ### CLI Commands (inside chat)
@@ -123,7 +127,7 @@ idkagent chat --provider gemini --model gemini-2.5-flash
 
 ### Discord Bot
 
-1. Set `gateway: discord` in `config.yml`
+1. Set `gateways.discord: true` in `config.yml`
 2. Add your bot token under `discord.token`
 3. Configure allowed channels in `discord.allowedChannels`
 4. Start the bot:
@@ -151,16 +155,27 @@ idkagent comes with a rich set of built-in tools that the AI can autonomously in
 | `patch_file` | Search-and-replace within existing files |
 | `list_dir` | List directory contents with file sizes |
 | `run_command` | Execute shell commands (async, no event loop blocking) |
+| `run_js` | Execute JavaScript/Node.js code (batch processing, loops) |
+| `fetch` | Fetch URLs and return content as text |
+| `search` | Web search via Google (powered by Gemini) |
 | `credential` | Securely store & retrieve API keys/tokens |
 | `git` | Full git operations with automatic authentication |
 | `project` | Register and manage development projects |
 | `update_memory` | Write to permanent agent memory (MEMORY.md) |
 | `ask` | Ask the user interactive multiple-choice questions |
 | `invoke_subagents` | Delegate parallel tasks to sub-agents (max 5) |
+| `java_index` | Index Java projects, extract classes & methods |
+| `java_find_method` | Search indexed Java methods by name |
+| `java_find_class` | Search indexed Java classes by name |
+| `java_show_class` | Show full details of a specific Java class |
+| `java_show_method` | Show full source code of a specific Java method |
+| `java_index_info` | Show index statistics for a Java project |
+| `java_index_clear` | Clear Java project index for re-indexing |
+| `lsp` | Language server diagnostics (TypeScript/Java) |
 
 ### Credential Vault
 
-Sensitive values (API keys, tokens) are stored encrypted at rest in `workspace/credentials/secrets.json`:
+Sensitive values (API keys, tokens) are stored encrypted at rest in `credentials/secrets.json` (at the project root):
 
 ```bash
 # In CLI chat, tell the agent:
@@ -200,18 +215,31 @@ idkagent/
 │       ├── patch_file.ts     # Search-and-replace file patching
 │       ├── list_dir.ts       # Directory listing
 │       ├── run_command.ts    # Async shell command execution
+│       ├── run_js.ts         # JavaScript sandbox execution
+│       ├── fetch.ts          # URL fetching
+│       ├── search.ts         # Web search (Google via Gemini)
 │       ├── credential.ts     # Secure credential vault
 │       ├── git.ts            # Git operations with auth injection
 │       ├── project.ts        # Project registry management
 │       ├── update_memory.ts  # Permanent memory (MEMORY.md)
 │       ├── ask.ts            # Interactive user questions
 │       ├── lsp.ts            # Language server diagnostics runner
-│       └── jdtls_client.ts   # Java LSP (jdtls) client
+│       ├── jdtls_client.ts   # Java LSP (jdtls) client
+│       ├── java_indexer.ts   # Java project indexer
+│       └── java_index_trigger.ts # Java index trigger tool
 ├── install.sh                # One-command install & PATH setup
 ├── idkagent-wrapper.sh       # Global wrapper script (resolves symlinks)
 ├── config.yml                # Configuration (API keys, models, gateways)
 ├── tsconfig.json
-└── package.json
+├── package.json
+├── workspace/                # Default working directory (user projects)
+├── .sessions/                # Session history files (auto-managed)
+├── credentials/              # Credential vault
+│   └── secrets.json          # Encrypted credential file
+├── AGENT.md                  # Injected into system prompt (optional)
+├── SOUL.md                   # Injected into system prompt (optional)
+├── MEMORY.md                 # Permanent agent memory (via update_memory tool)
+├── projects.json             # Registered development projects
 ```
 
 ### Agent Loop Flow
@@ -239,9 +267,9 @@ User Message
 ```yaml
 providers:
   <name>:                          # Provider identifier
-    type: openai-compatible|gemini # Provider type
+    type: openai-compatible|gemini # Provider type (optional, auto-detected)
     apiKey: "<key>"                # API key (or leave empty for env vars)
-    baseURL: "<url>"               # Base URL (optional, for OpenAI-compatible)
+    baseURL: "<url>"               # Base URL (required for OpenAI-compatible)
 
 models:
   main:                            # Primary model
@@ -253,14 +281,18 @@ models:
     model: "<model-id>"
 
 guardrail:
-  enabled: true                    # Enable content safety check
+  enabled: true|false              # Enable content safety check
   provider: <name>                 # Provider for guardrail
   model: "<model-id>"              # Model for guardrail
+  safeWord: "SAFE"                 # Keyword for safe responses
+  modelIsGuard: false              # Use main model as guardrail
 
 context:
   maxHistoryTokens: 8000           # Token limit before compression triggers
 
-gateway: cli|discord               # Default gateway
+gateways:
+  cli: true|false                  # Enable CLI gateway
+  discord: true|false              # Enable Discord gateway
 
 discord:
   token: "<bot-token>"             # Discord bot token
@@ -273,18 +305,25 @@ queue:
   concurrency: 1                   # Concurrent message processing
 
 logging:
-  showThinking: true               # Show AI reasoning
-  showToolCalls: true              # Show tool invocations
-  showToolResults: true            # Show tool outputs
+  showThinking: true|false         # Show AI reasoning
+  showToolCalls: true|false        # Show tool invocations
+  showToolResults: true|false      # Show tool outputs
   truncateAt: 500                  # Truncation length for platform messages
 
 lsp:
   typescript:
     bin: tsc                       # TypeScript compiler path
-    enabled: true
+    enabled: true|false
   java:
     bin: jdtls                     # Java LSP server path
-    enabled: false
+    enabled: true|false
+
+search:
+  enabled: true|false              # Enable web search capability
+  provider: <name>                 # Provider for search (e.g. gemini)
+  model: "<model-id>"              # Model for search queries
+
+disableTool: true|false            # When true, disables all tool calls — agent becomes a pure chat bot
 ```
 
 Environment variable overrides:
@@ -366,28 +405,40 @@ When conversation history exceeds the token limit, idkagent automatically summar
 
 The AI can spawn up to 5 parallel sub-agents for complex multi-file tasks. Sub-agents are isolated (no recursive delegation) and report back to the main agent.
 
+### Web Search
+
+idkagent can search the web in real-time via Google Search (powered by Gemini). When enabled, the AI can autonomously decide to search for up-to-date information.
+
+### Java Project Indexing
+
+idkagent can index Java projects, extract all classes and methods with metadata, and provide fast querying capabilities through dedicated tools (`java_index`, `java_find_method`, `java_find_class`, etc.). This enables the AI to understand and navigate Java codebases.
+
 ### Retry Logic
 
 Both Gemini and OpenAI-compatible providers feature exponential backoff with jitter for rate limits (429) and server errors (5xx), with configurable retry limits.
 
 ### Session Persistence
 
-Conversation sessions are saved to `workspace/.sessions/<id>.json` and survive restarts. System prompts are never persisted — they are regenerated fresh on each load.
+Conversation sessions are saved to `.sessions/<id>.json` (at the project root) and survive restarts. System prompts are never persisted — they are regenerated fresh on each load.
 
 ---
 
-## 📁 workspace/ Directory
+## 📁 Project Structure
 
 ```
-workspace/
-├── .sessions/            # Session history files (auto-managed)
+idkagent/                         # Project root (~/.idkagent/)
+├── .sessions/                    # Session history files (auto-managed)
 ├── credentials/
-│   └── secrets.json      # Encrypted credential vault
-├── .jdtls_data/          # Java LSP workspace data
-├── AGENT.md              # Injected into system prompt (optional)
-├── SOUL.md               # Injected into system prompt (optional)
-├── MEMORY.md             # Permanent agent memory (via update_memory tool)
-└── projects.json         # Registered development projects
+│   └── secrets.json              # Encrypted credential vault
+├── workspace/                    # Default working directory (user projects)
+├── .jdtls_data/                  # Java LSP workspace data
+├── AGENT.md                      # Injected into system prompt (optional)
+├── SOUL.md                       # Injected into system prompt (optional)
+├── MEMORY.md                     # Permanent agent memory (via update_memory tool)
+├── projects.json                 # Registered development projects
+├── config.yml                    # Configuration file
+├── install.sh                    # Installation script
+└── ...                           # Source code and other files
 ```
 
 ---

@@ -1,10 +1,21 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Tool } from './types.js';
 
-// Credentials are stored in credentials/secrets.json
+// ─── Consistent data directory ──────────────────────────────
+// Determines the project parent directory reliably from the module location,
+// NOT from process.cwd() which can vary depending on how the agent is started.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// src/tools/credential.ts  ->  src/tools/  ->  src/  ->  project root
+// dist/tools/credential.js -> dist/tools/ -> dist/ -> project root
+const projectRoot = resolve(__dirname, '..', '..');
+// Data directory is the parent of the project root (e.g. ~/.idkagent/)
+const dataDir = resolve(projectRoot, '..');
+
 function getCredentialsPath(): string {
-  return resolve(process.cwd(), '..', 'credentials', 'secrets.json');
+  return resolve(dataDir, 'credentials', 'secrets.json');
 }
 
 function readSecrets(): Record<string, string> {

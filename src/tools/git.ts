@@ -1,7 +1,18 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Tool } from './types.js';
+
+// ─── Consistent data directory ──────────────────────────────
+// Determines the project parent directory reliably from the module location
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// dist/tools/git.js -> dist/tools/ -> dist/ -> project root
+// src/tools/git.ts  -> src/tools/  -> src/  -> project root
+const projectRoot = resolve(__dirname, '..', '..');
+// Data directory is the parent of the project root (e.g. ~/.idkagent/)
+const dataDir = resolve(projectRoot, '..');
 
 const TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_LENGTH = 10_000;
@@ -10,16 +21,22 @@ const MAX_OUTPUT_LENGTH = 10_000;
 const REMOTE_ACTIONS = new Set(['clone', 'push', 'pull', 'fetch']);
 
 function getDefaultCwd(): string {
-  return resolve(process.cwd(), '..', 'workspace');
+  return resolve(dataDir, 'workspace');
 }
 
-// Read git_token and git_username from the credential store silently
+// ─── Shared: resolve credentials path consistently ──────────
+function getCredentialPath(): string {
+  return resolve(dataDir, 'credentials', 'secrets.json');
+}
+
+// Read git_token (or fallback to github_token) from the credential store silently
 function readGitCredentials(): { username: string; token: string } | null {
   try {
-    const credPath = resolve(process.cwd(), '..', 'credentials', 'secrets.json');
+    const credPath = getCredentialPath();
     if (!existsSync(credPath)) return null;
     const secrets = JSON.parse(readFileSync(credPath, 'utf-8')) as Record<string, string>;
-    const token = secrets['git_token'];
+    // Prefer git_token but fallback to github_token
+    const token = secrets['git_token'] ?? secrets['github_token'];
     if (!token) return null;
     const username = secrets['git_username'] ?? 'oauth2';
     return { username, token };

@@ -32,6 +32,9 @@ export interface LLMResponse {
 
 // ─── Provider Interface ─────────────────────────────────────
 
+/** Callback for status/retry messages that should be forwarded to gateways */
+export type ProviderEventCallback = (event: { type: 'provider_log'; content: string }) => void;
+
 export interface LLMProviderOptions {
   apiKey: string;
   model: string;
@@ -43,5 +46,5 @@ export interface LLMProviderOptions {
 export interface LLMProvider {
   readonly name: string;
   readonly maxContextWindow: number;
-  chat(messages: Message[], tools: ToolDefinition[]): Promise<LLMResponse>;
+  chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback): Promise<LLMResponse>;
 }

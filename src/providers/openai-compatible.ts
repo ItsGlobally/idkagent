@@ -5,6 +5,7 @@ import type {
   LLMProviderOptions,
   LLMResponse,
   Message,
+  ProviderEventCallback,
   ToolCall,
   ToolDefinition,
 } from './types.js';
@@ -140,7 +141,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     return 128_000;
   }
 
-  async chat(messages: Message[], tools: ToolDefinition[]): Promise<LLMResponse> {
+  async chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback): Promise<LLMResponse> {
     const openaiMessages = toOpenAIMessages(messages);
     const openaiTools = tools.length > 0 ? toOpenAITools(tools) : undefined;
 
@@ -208,7 +209,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
         if ((status === 429 || (status && status >= 500)) && attempt <= MAX_RETRIES) {
           const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt - 1), MAX_DELAY_MS);
           const delayWithJitter = Math.round(jitter(delay));
-          console.log(`⏳ API Error ${status}, retrying in ${delayWithJitter}ms... (attempt ${attempt}/${MAX_RETRIES})`);
+          const retryMsg = `⏳ API Error ${status}, retrying in ${delayWithJitter}ms... (attempt ${attempt}/${MAX_RETRIES})`;
+          console.log(retryMsg);
+          onEvent?.({ type: 'provider_log', content: retryMsg });
           await new Promise((resolve) => setTimeout(resolve, delayWithJitter));
           continue;
         }

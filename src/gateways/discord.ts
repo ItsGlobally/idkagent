@@ -190,7 +190,9 @@ export class DiscordGateway implements Gateway {
               let msg = '';
               if (event.type === 'thinking' && this.config.logging.showThinking) {
               msg = event.content;
-              } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
+              } else if (event.type === 'provider_log') {
+              msg = `📡 ${event.content}`;
+            } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
               const path = event.content;
               msg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(path, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;
             } else if (event.type === 'tool_result' && this.config.logging.showToolResults) {
@@ -248,6 +250,8 @@ export class DiscordGateway implements Gateway {
               let extraComps: any[] | undefined;
               if (event.type === 'thinking' && this.config.logging.showThinking) {
                 msg = event.content;
+              } else if (event.type === 'provider_log') {
+                msg = `📡 ${event.content}`;
               } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
                 const path = event.content;
                 msg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(path, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;
@@ -401,7 +405,9 @@ export class DiscordGateway implements Gateway {
 
             if (event.type === 'thinking' && this.config.logging.showThinking) {
               msg = `💭 **Thinking...**\n\`\`\`\n${event.content}\n\`\`\``;
-              } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
+            } else if (event.type === 'provider_log') {
+              msg = `📡 ${event.content}`;
+            } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
                 const path = event.content;
                 msg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(path, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;
               } else if (event.type === 'tool_result' && this.config.logging.showToolResults) {
@@ -498,6 +504,8 @@ export class DiscordGateway implements Gateway {
 
             if (event.type === 'thinking' && this.config.logging.showThinking) {
               replyMsg = event.content;
+            } else if (event.type === 'provider_log') {
+              replyMsg = `📡 ${event.content}`;
             } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
               const path = event.content;
               replyMsg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(path, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;

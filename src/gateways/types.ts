@@ -9,7 +9,7 @@ export interface GatewayMessage {
 }
 
 export interface AgentEvent {
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'text' | 'error' | 'queue_status' | 'ask';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'text' | 'error' | 'queue_status' | 'ask' | 'provider_log';
   content: string;
   metadata?: Record<string, unknown>;
 }

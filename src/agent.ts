@@ -120,10 +120,21 @@ export class Agent {
     }));
   }
 
+  /** When tools are disabled, only allow search / fetch */
+  private getSafeToolDefinitions(): ToolDefinition[] {
+    return this.tools
+      .filter((t) => t.name === 'search' || t.name === 'fetch')
+      .map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      }));
+  }
+
   private loadSystemPrompt(): string {
     let prompt: string;
     if (this.config.disableTool) {
-      prompt = 'You are a friendly AI chatbot. You chat with the user in a helpful and engaging way. You do not have access to any tools — you can only provide text responses. Keep your answers concise and natural.';
+      prompt = 'You are a helpful assistant with web search and URL fetching capabilities. You can search the web using the search tool and fetch web pages using the fetch tool. You do NOT have access to any file system, command execution, or other developer tools. Keep your answers concise and natural.';
     } else {
       prompt = 'You are a helpful coding assistant. You have access to tools for reading, creating, and modifying files, listing directories, and running commands. Use these tools to help the user with their coding tasks. Think step by step before taking action.';
     }
@@ -147,7 +158,7 @@ export class Agent {
 
     if (this.config.disableTool) {
       prompt += `\n\n[System Note]:
-You are in pure chat mode — you do NOT have access to any tools. You can only respond with text.
+You are in limited mode — you only have access to the search and fetch tools. You do NOT have any file system, command execution, credential, or other developer tools available.
 Your default working directory is workspace/. All relative file paths resolve there unless you specify an absolute path.`;
     } else {
       prompt += `\n\n[System Note:
@@ -242,9 +253,8 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     let totalTokens = messages.reduce((acc, msg) => acc + estimateTokens(msg), 0);
     if (totalTokens <= maxTokens) return;
 
-    if (onEvent) {
-      onEvent({ type: 'text', content: '🗜️ **Context Limit Exceeded**: Triggering intelligent compression to save tokens...' });
-    }
+    // Internal log only — don't send to gateway to avoid consuming reply slot
+    console.log('🗜️ Context Limit Exceeded — compressing...');
 
     // Find the boundary after the first 4 user messages,
     // then extend forward to include complete tool-call chains
@@ -339,9 +349,8 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
         if (totalTokens <= maxTokens) return;
       } catch (err) {
         console.warn('Compression failed, falling back to simple dropping:', err);
-        if (onEvent) {
-          onEvent({ type: 'text', content: '⚠️ Context compression failed, falling back to dropping old messages.' });
-        }
+        // Internal log only — don't send to gateway to avoid consuming reply slot
+        console.warn('⚠️ Context compression failed, falling back to dropping old messages.');
       }
     }
 
@@ -482,8 +491,8 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       }
     }
 
-    // When tools are disabled, pass empty tool definitions so the LLM has no tools to call
-    const toolDefs = this.config.disableTool ? [] : this.getToolDefinitions();
+    // When tools are disabled, restrict to search/fetch only
+    const toolDefs = this.config.disableTool ? this.getSafeToolDefinitions() : this.getToolDefinitions();
 
     // Cache system prompt for all iterations of this message (avoid redundant disk reads)
     const systemPromptContent = this.loadSystemPrompt();
@@ -521,7 +530,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
           onEvent({ type: 'text', content: '⚠️ Main provider previously failed, using fallback provider.' });
           response = await this.providers.fallback.chat(messagesForModel, toolDefs);
         } else {
-          response = await this.providers.main.chat(messagesForModel, toolDefs);
+          response = await this.providers.main.chat(messagesForModel, toolDefs, onEvent);
         }
       } catch (err) {
         if (this.providers.fallback && !this.useFallback) {
@@ -529,7 +538,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
           onEvent({ type: 'text', content: `⚠️ Main provider failed, switching to fallback provider.` });
           this.useFallback = true;
           try {
-            response = await this.providers.fallback.chat(messagesForModel, toolDefs);
+            response = await this.providers.fallback.chat(messagesForModel, toolDefs, onEvent);
           } catch (err2) {
             const errorMsg = err2 instanceof Error ? err2.message : String(err2);
             onEvent({ type: 'error', content: `LLM API Error (Main and Fallback failed): ${errorMsg}` });
@@ -559,18 +568,21 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
 
       // If there are tool calls, execute them
       if (response.toolCalls && response.toolCalls.length > 0) {
-        // If tools are disabled, reject tool calls and return the text response directly
+        // If tools are disabled, reject unexpected tool calls (safety check)
         if (this.config.disableTool) {
-          let text = response.content || '[Tool calls are disabled in pure chat mode.]';
-          const usage = this.usageMap.get(message.sessionId);
-          if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
-            text += `\n-# ${this.config.models.main.model} · ↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()}`;
+          const hasUnsafe = response.toolCalls.some(tc => tc.name !== 'search' && tc.name !== 'fetch');
+          if (hasUnsafe) {
+            let text = response.content || '[Tool calls are disabled in pure chat mode.]';
+            const usage = this.usageMap.get(message.sessionId);
+            if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
+              text += `\n-# ${this.config.models.main.model} · ↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()}`;
+            }
+            onEvent({ type: 'text', content: text });
+            messages.push({ role: 'assistant', content: text });
+            this.sessions.set(message.sessionId, messages);
+            this.saveSession(message.sessionId);
+            return;
           }
-          onEvent({ type: 'text', content: text });
-          messages.push({ role: 'assistant', content: text });
-          this.sessions.set(message.sessionId, messages);
-          this.saveSession(message.sessionId);
-          return;
         }
 
         // If the model provided text alongside the tool call, emit it as thinking/reasoning so the user can see it

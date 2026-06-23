@@ -166,6 +166,15 @@ export class OpenAICompatibleProvider implements LLMProvider {
         const msg = choice.message;
         const result: LLMResponse = {};
 
+        // Extract usage info
+        const usage = response.usage as Record<string, any> | undefined;
+        if (usage) {
+          result.usage = {
+            promptTokens: usage.prompt_tokens ?? 0,
+            completionTokens: usage.completion_tokens ?? 0,
+          };
+        }
+
         // Extract reasoning / thinking content (deepseek, etc.)
         const anyMsg = msg as unknown as Record<string, unknown>;
         if (typeof anyMsg.reasoning_content === 'string' && anyMsg.reasoning_content) {

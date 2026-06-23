@@ -18,6 +18,7 @@ export class Agent {
   private useFallback: boolean = false;
   private static activeSubAgentsCount = 0;
   private static readonly MAX_SUBAGENTS = 5;
+  private usageMap: Map<string, { promptTokens: number; completionTokens: number }> = new Map();
 
   constructor(
     providers: { main: LLMProvider; fallback?: LLMProvider; guardrail?: LLMProvider },
@@ -408,6 +409,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
 
     if (contentTrimmed === '/reset') {
       this.clearSession(message.sessionId);
+      this.usageMap.delete(message.sessionId);
       onEvent({ type: 'text', content: 'Session reset. Context cleared.' });
       return;
     }
@@ -540,6 +542,16 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
         }
       }
 
+      // Accumulate token usage
+      if (response.usage) {
+        const sessionId = message.sessionId;
+        const current = this.usageMap.get(sessionId) || { promptTokens: 0, completionTokens: 0 };
+        this.usageMap.set(sessionId, {
+          promptTokens: current.promptTokens + response.usage.promptTokens,
+          completionTokens: current.completionTokens + response.usage.completionTokens,
+        });
+      }
+
       // Emit thinking event
       if (response.thinking) {
         onEvent({ type: 'thinking', content: response.thinking });
@@ -549,7 +561,12 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       if (response.toolCalls && response.toolCalls.length > 0) {
         // If tools are disabled, reject tool calls and return the text response directly
         if (this.config.disableTool) {
-          const text = response.content || '[Tool calls are disabled in pure chat mode.]';
+          let text = response.content || '[Tool calls are disabled in pure chat mode.]';
+          const usage = this.usageMap.get(message.sessionId);
+          if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
+            const total = usage.promptTokens + usage.completionTokens;
+            text += `\n\n---\n*🧮 ${total.toLocaleString()} tokens total (↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()})*`;
+          }
           onEvent({ type: 'text', content: text });
           messages.push({ role: 'assistant', content: text });
           this.sessions.set(message.sessionId, messages);
@@ -630,7 +647,13 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       }
 
       // No tool calls — this is the final text response
-      const text = response.content || '';
+      let text = response.content || '';
+      // Append token usage info
+      const usage = this.usageMap.get(message.sessionId);
+      if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
+        const total = usage.promptTokens + usage.completionTokens;
+        text += `\n\n---\n*🧮 ${total.toLocaleString()} tokens total (↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()})*`;
+      }
       onEvent({ type: 'text', content: text });
 
       messages.push({ role: 'assistant', content: text });

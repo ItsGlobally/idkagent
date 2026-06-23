@@ -24,6 +24,10 @@ export interface LLMResponse {
   thinking?: string;
   content?: string;
   toolCalls?: ToolCall[];
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+  };
 }
 
 // ─── Provider Interface ─────────────────────────────────────

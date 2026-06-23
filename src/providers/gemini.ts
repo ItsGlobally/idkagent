@@ -274,6 +274,15 @@ export class GeminiProvider implements LLMProvider {
           return result;
         }
 
+        // Extract usage metadata
+        const usageMeta = response.usageMetadata as Record<string, any> | undefined;
+        if (usageMeta) {
+          result.usage = {
+            promptTokens: usageMeta.promptTokenCount ?? 0,
+            completionTokens: usageMeta.candidatesTokenCount ?? 0,
+          };
+        }
+
         const toolCalls: ToolCall[] = [];
 
         for (const part of candidate.content.parts) {
@@ -288,8 +297,6 @@ export class GeminiProvider implements LLMProvider {
               id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
               name: anyPart.functionCall.name,
               arguments: anyPart.functionCall.args || {},
-              // Note: The Node SDK uses camelCase for everything, including the response properties.
-              // So we must look for 'thoughtSignature' (camelCase), not 'thought_signature'.
               thoughtSignature: anyPart.functionCall?.thoughtSignature || anyPart.thoughtSignature,
             });
           } else if (anyPart.text) {

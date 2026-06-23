@@ -20,7 +20,7 @@
 - **Safety** — Configurable guardrail provider, credential masking, prompt injection detection
 - **Sub-Agent Delegation** — Parallel task execution with up to 5 concurrent sub-agents
 - **Session Persistence** — Per-user conversation history saved to disk, with intelligent context compression
-- **One-Command Install** — Automatic setup with PATH integration via `install.sh`
+- **One-Command Install** — Automatic setup via `install.sh`
 
 ---
 
@@ -38,12 +38,12 @@ This will:
 3. Install npm dependencies
 4. Build the project
 5. Create a default configuration
-6. Install the `idkagent` wrapper command into your PATH
 
-After installation, **restart your shell** or run `source ~/.bashrc`, then:
+After installation, run idkagent from the repository:
 
 ```bash
-idkagent help
+cd ~/.idkagent/idkagent
+npm start chat
 ```
 
 ### Manual Install
@@ -61,7 +61,7 @@ npm run build
 Edit `config.yml` to set your API keys:
 
 ```bash
-nano config.yml
+nano ~/.idkagent/config.yml
 ```
 
 The configuration file supports:
@@ -75,7 +75,7 @@ The configuration file supports:
 You can also override providers at runtime:
 
 ```bash
-idkagent chat --provider gemini --model gemini-2.5-flash
+npm start chat -- --provider gemini --model gemini-2.5-flash
 ```
 
 ---
@@ -84,14 +84,16 @@ idkagent chat --provider gemini --model gemini-2.5-flash
 
 ### Commands
 
+All commands are run via `npm start` from the repository directory (`~/.idkagent/idkagent/`):
+
 | Command | Description |
 |---------|-------------|
-| `idkagent chat` | Start interactive CLI chat session |
-| `idkagent gateway start` | Start Discord bot gateway |
-| `idkagent config init` | Create default `config.yml` |
-| `idkagent config update` | Update config with missing defaults |
-| `idkagent config show` | Display current configuration |
-| `idkagent help` | Show help message |
+| `npm start chat` | Start interactive CLI chat session |
+| `npm start gateway start` | Start Discord bot gateway |
+| `npm start config init` | Create default `config.yml` |
+| `npm start config update` | Update config with missing defaults |
+| `npm start config show` | Display current configuration |
+| `npm start help` | Show help message |
 
 ### Flags
 
@@ -99,23 +101,23 @@ idkagent chat --provider gemini --model gemini-2.5-flash
 |------|-------------|
 | `--provider <name>` | Override LLM provider |
 | `--model <name>` | Override model name |
-| `--gateway <name>` | Override gateway (`cli` / `discord`) |
 | `--search` | Enable or disable web search (default: from config) |
 
 ### CLI Chat
 
 ```bash
 # Start a conversation
-idkagent chat
+cd ~/.idkagent/idkagent
+npm start chat
 
 # Override provider/model
-idkagent chat --provider openrouter --model deepseek/deepseek-r1
+npm start chat -- --provider openrouter --model deepseek/deepseek-r1
 
 # Chat with Gemini
-idkagent chat --provider gemini --model gemini-2.5-flash
+npm start chat -- --provider gemini --model gemini-2.5-flash
 
 # Enable web search
-idkagent chat --search true
+npm start chat -- --search true
 ```
 
 ### CLI Commands (inside chat)
@@ -128,13 +130,14 @@ idkagent chat --search true
 
 ### Discord Bot
 
-1. Set `gateways.discord: true` in `config.yml`
+1. Set `gateways.discord: true` in `~/.idkagent/config.yml`
 2. Add your bot token under `discord.token`
 3. Configure allowed channels in `discord.allowedChannels`
 4. Start the bot:
 
 ```bash
-idkagent gateway start
+cd ~/.idkagent/idkagent
+npm start gateway start
 ```
 
 The bot supports:
@@ -176,7 +179,7 @@ idkagent comes with a rich set of built-in tools that the AI can autonomously in
 
 ### Credential Vault
 
-Sensitive values (API keys, tokens) are stored encrypted at rest in `credentials/secrets.json` (in the data root `~/.idkagent/`):
+Sensitive values (API keys, tokens) are stored encrypted at rest in `~/idkagent/credentials/secrets.json`:
 
 ```bash
 # In CLI chat, tell the agent:
@@ -191,7 +194,7 @@ Values retrieved via `credential` are **masked from conversation history** to pr
 ## 🏗️ Architecture
 
 ```
-idkagent/
+idkagent/                         # Repository directory (~/.idkagent/idkagent/)
 ├── src/
 │   ├── index.ts              # CLI entry point & command router
 │   ├── agent.ts              # Core agent loop, session management, context compression
@@ -228,8 +231,8 @@ idkagent/
 │       ├── jdtls_client.ts   # Java LSP (jdtls) client
 │       ├── java_indexer.ts   # Java project indexer
 │       └── java_index_trigger.ts # Java index trigger tool
-├── install.sh                # One-command install & PATH setup
-├── idkagent-wrapper.sh       # Global wrapper script (resolves symlinks)
+├── install.sh                # One-command install
+├── idkagent-wrapper.sh       # Global wrapper script (for manual PATH setup)
 ├── tsconfig.json
 ├── package.json
 └── dist/                     # Compiled JavaScript
@@ -255,7 +258,7 @@ User Message
 
 ## ⚙️ Configuration Reference
 
-`config.yml` full schema:
+`~/.idkagent/config.yml` full schema:
 
 ```yaml
 providers:
@@ -328,6 +331,7 @@ Environment variable overrides:
 
 ```bash
 # Run in development mode (tsx, no build needed)
+cd ~/.idkagent/idkagent
 npm run dev -- chat
 npm run dev -- gateway start
 
@@ -412,7 +416,7 @@ Both Gemini and OpenAI-compatible providers feature exponential backoff with jit
 
 ### Session Persistence
 
-Conversation sessions are saved to `.sessions/<id>.json` (in the data root `~/.idkagent/`) and survive restarts. System prompts are never persisted — they are regenerated fresh on each load.
+Conversation sessions are saved to `.sessions/<id>.json` (in `~/.idkagent/`) and survive restarts. System prompts are never persisted — they are regenerated fresh on each load.
 
 ---
 
@@ -424,7 +428,7 @@ Conversation sessions are saved to `.sessions/<id>.json` (in the data root `~/.i
 │   ├── src/                      # TypeScript source code
 │   ├── dist/                     # Compiled JavaScript
 │   ├── install.sh                # Installation script
-│   ├── idkagent-wrapper.sh       # Global wrapper script
+│   ├── idkagent-wrapper.sh       # Global wrapper script (for manual setup)
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── ...

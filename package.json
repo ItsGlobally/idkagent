@@ -1,0 +1,27 @@
+{
+  "name": "idkagent",
+  "version": "1.0.0",
+  "description": "AI Agent with reasoning and tool use",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "idkagent": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.8.0",
+    "discord.js": "^14.18.0",
+    "openai": "^5.8.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/yaml": "^1.9.6",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}

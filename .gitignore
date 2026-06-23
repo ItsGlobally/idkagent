@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.js
+*.d.ts
+*.js.map
+!src/**
+package-lock.json
+
+config.json
+config.yml
+workspace/
+MEMORY.md

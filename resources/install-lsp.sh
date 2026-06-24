@@ -31,7 +31,7 @@ if command -v jdtls &>/dev/null; then
 else
   echo "   ⏳ Downloading JDT LS..."
   JDTLS_URL="https://download.eclipse.org/jdtls/snapshots/jdt-language-server-1.54.0-202511200503.tar.gz"
-  JDTLS_DIR="$HOME/jdtls"
+  JDTLS_DIR="$HOME/.idkagent/lsp/jdtls"
   mkdir -p "$JDTLS_DIR" "$BIN_DIR"
   curl -#L "$JDTLS_URL" | tar xz -C "$JDTLS_DIR"
   echo "   ✅ Extracted to $JDTLS_DIR"

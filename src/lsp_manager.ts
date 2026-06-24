@@ -37,7 +37,7 @@ const KNOWN_LSPS: LspDefinition[] = [
     checkCommand: 'jdtls --version 2>/dev/null || echo "not_found"',
     installCommand: [
       'JDTLS_URL="https://download.eclipse.org/jdtls/snapshots/jdt-language-server-1.54.0-202511200503.tar.gz"',
-      'JDTLS_DIR="$HOME/jdtls"',
+      'JDTLS_DIR="$HOME/.idkagent/lsp/jdtls"',
       'BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"',
       'if [ -f "$BIN_DIR/jdtls" ]; then',
       '  echo "   ✅ Already installed."',
@@ -108,7 +108,7 @@ export function installLsp(lsp: LspDefinition): { success: boolean; output: stri
   if (lsp.name === 'java') {
     // Auto-install JDT LS by downloading and extracting
     const jdtlsUrl = lsp.url;
-    const jdtlsDir = path.join(os.homedir(), 'jdtls');
+    const jdtlsDir = path.join(os.homedir(), '.idkagent', 'lsp', 'jdtls');
     const binDir = process.env.XDG_BIN_HOME || path.join(os.homedir(), '.local', 'bin');
     const jdtlsBin = path.join(binDir, 'jdtls');
 
@@ -196,7 +196,7 @@ export function installLsp(lsp: LspDefinition): { success: boolean; output: stri
 
 export function uninstallLsp(lsp: LspDefinition): { success: boolean; output: string } {
   if (lsp.name === 'java') {
-    const jdtlsDir = path.join(os.homedir(), 'jdtls');
+    const jdtlsDir = path.join(os.homedir(), '.idkagent', 'lsp', 'jdtls');
     const binDir = process.env.XDG_BIN_HOME || path.join(os.homedir(), '.local', 'bin');
     const jdtlsBin = path.join(binDir, 'jdtls');
 
@@ -273,7 +273,7 @@ export function getInstallScriptContent(): string {
         parts.push(`else`);
         parts.push(`  echo "   ⏳ Downloading JDT LS..."`);
         parts.push(`  JDTLS_URL="${lsp.url}"`);
-        parts.push(`  JDTLS_DIR="\$HOME/jdtls"`);
+        parts.push(`  JDTLS_DIR="\$HOME/.idkagent/lsp/jdtls"`);
         parts.push(`  mkdir -p "\$JDTLS_DIR" "\$BIN_DIR"`);
         parts.push(`  curl -#L "\$JDTLS_URL" | tar xz -C "\$JDTLS_DIR"`);
         parts.push(`  echo "   ✅ Extracted to \$JDTLS_DIR"`);

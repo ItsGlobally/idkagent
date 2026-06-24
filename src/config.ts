@@ -340,3 +340,22 @@ export function getEnabledPlatforms(config: AgentConfig): string[] {
     .filter(([, enabled]) => enabled)
     .map(([name]) => name);
 }
+
+/** Save a full config object to the config file on disk */
+export function saveConfig(config: AgentConfig): void {
+  const configPath = getConfigPath();
+  const cleaned: Record<string, unknown> = {
+    providers: providersToFile(config.providers),
+    models: config.models,
+    guardrail: config.guardrail,
+    context: config.context,
+    gateways: config.gateways,
+    discord: config.discord,
+    queue: config.queue,
+    logging: config.logging,
+    lsp: config.lsp,
+    search: config.search,
+  };
+  if (config.disableTool) cleaned.disableTool = true;
+  fs.writeFileSync(configPath, yaml.stringify(cleaned), 'utf-8');
+}

@@ -5,7 +5,9 @@ export interface GatewayMessage {
   userId: string;
   userName?: string;
   content: string;
-  action?: 'retry_continue' | 'retry_restart';
+  action?: 'retry_continue' | 'retry_restart' | 'gateway_restarted';
+  /** Gateway platform identifier, e.g. 'discord', 'cli' */
+  gateway?: string;
 }
 
 export interface AgentEvent {
@@ -24,4 +26,11 @@ export type MessageHandler = (
 export interface Gateway {
   start(handler: MessageHandler): Promise<void>;
   stop(): Promise<void>;
+  /**
+   * Optional: Create an event handler for a recovered session.
+   * Used during gateway restart recovery to route model responses
+   * back through the appropriate gateway channel/platform.
+   * Returns null if this gateway cannot handle the given session.
+   */
+  createSessionEventHandler?(sessionId: string): Promise<AgentEventHandler | null>;
 }

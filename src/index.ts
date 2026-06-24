@@ -160,14 +160,6 @@ async function runChat(config: AgentConfig): Promise<void> {
   await gateway.start((message, onEvent) => agent.handleMessage(message, onEvent));
 }
 
-function countSessionFiles(): number {
-  try {
-    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
-    if (!fs.existsSync(sessionsDir)) return 0;
-    return fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json')).length;
-  } catch { return 0; }
-}
-
 async function runGatewayStart(config: AgentConfig): Promise<void> {
   const platforms = Object.entries(config.gateways || {})
     .filter(([, v]) => v)
@@ -197,12 +189,6 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
   const tools = getAllTools(getSearchOptions(config));
   const agent = new Agent({ main: mainProvider, fallback: fallbackProvider, guardrail: guardrailProvider }, tools, config);
   const queue = new MessageQueue(config.queue);
-
-  // Count recovered sessions from disk
-  const recoveredSessions = countSessionFiles();
-  if (recoveredSessions > 0) {
-    console.log(`♻️  ${recoveredSessions} session(s) recovered from disk. Conversations will resume on next user message.`);
-  }
 
   console.log(`${CYAN}Starting gateway(s): ${platforms.join(', ')}...${RESET}`);
   console.log(`${CYAN}Initializing LSP servers...${RESET}`);
@@ -237,6 +223,14 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+  // Catch unhandled rejections as a safety net (e.g. race conditions during shutdown)
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    if (!msg.includes('Expected token to be set') && !msg.includes('Cannot send messages')) {
+      console.error(`${RED}❌ Unhandled rejection:${RESET} ${msg}`);
+    }
+  });
+
   try {
     // Start all enabled gateways concurrently, each with the shared queue
     await Promise.all(gateways.map((gw) =>
@@ -244,6 +238,46 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
         queue.enqueue(message, (msg, ev) => agent.handleMessage(msg, ev), onEvent),
       ),
     ));
+
+    // ─── Session Recovery (after gateways are ready) ──────────
+    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
+    if (fs.existsSync(sessionsDir)) {
+      const sessionFiles = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
+      if (sessionFiles.length > 0) {
+        console.log(`♻️  Recovering ${sessionFiles.length} session(s) from disk...`);
+
+        for (const file of sessionFiles) {
+          const sessionId = file.replace('.json', '');
+          let recovered = false;
+
+          for (const gw of gateways) {
+            if (typeof (gw as any).createSessionEventHandler === 'function') {
+              const eventHandler = await (gw as any).createSessionEventHandler(sessionId);
+              if (eventHandler) {
+                // Notify the channel that the session is being resumed
+                eventHandler({ type: 'text', content: '♻️ **Gateway restarted** — 恢復先前的對話中...' });
+
+                // Process through the agent with gateway_restarted action
+                const prefix = sessionId.split('-')[0] || 'unknown';
+                agent.handleMessage(
+                  { sessionId, userId: 'system', content: '', action: 'gateway_restarted', gateway: prefix },
+                  eventHandler,
+                ).catch((err: any) => {
+                  console.error(`[Recovery] Error processing session ${sessionId}:`, err);
+                });
+
+                recovered = true;
+                break;
+              }
+            }
+          }
+
+          if (!recovered) {
+            console.log(`  ⚠️  Session ${sessionId}: no matching gateway found, leaving on disk.`);
+          }
+        }
+      }
+    }
   } catch (err) {
     // If a gateway fails to start / crashes, still try to save sessions
     console.error(`${RED}❌ Gateway error:${RESET} ${err instanceof Error ? err.message : err}`);

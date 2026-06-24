@@ -181,6 +181,13 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     return prompt.replace(/\n{3,}/g, '\n\n').trim();
   }
 
+  /** Estimate tokens for a message (rough heuristic: chars/4) */
+  private static estimateTokens(msg: Message): number {
+    let chars = msg.content ? msg.content.length : 0;
+    if (msg.toolCalls) chars += JSON.stringify(msg.toolCalls).length;
+    return Math.ceil(chars / 4);
+  }
+
   /** Get or create a session's message history (excludes system prompt — injected at send time) */
   private getSession(sessionId: string): Message[] {
     if (!this.sessions.has(sessionId)) {
@@ -198,6 +205,71 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
           } catch (e) {
             // fallback to empty
           }
+        }
+      }
+
+      // If loaded session is too large, keep only the most recent history to avoid
+      // triggering a massive compression that may fail on restart.
+      if (messages.length > 0) {
+        const maxTokens = this.providers.main.maxContextWindow ?? this.config.context.maxHistoryTokens;
+        const safeThreshold = Math.floor(maxTokens * 0.7); // 70% of context window
+        const totalTokens = messages.reduce((acc, m) => acc + Agent.estimateTokens(m), 0);
+
+        if (totalTokens > safeThreshold) {
+          console.log(`📏 Session ${sessionId}: ${totalTokens.toLocaleString()} estimated tokens > ${safeThreshold.toLocaleString()} limit. Trimming to recent history...`);
+
+          // Walk backwards from end, collecting messages. For tool results,
+          // also include their paired assistant-with-toolCalls to keep chains intact.
+          // Result is built in reverse order, then reversed at the end.
+          const kept: Message[] = [];
+          let budget = safeThreshold;
+
+          for (let i = messages.length - 1; i >= 0 && budget > 0; i--) {
+            const msg = messages[i];
+            const cost = Agent.estimateTokens(msg);
+
+            // Always try to keep non-tool messages (user, assistant, system)
+            if (msg.role !== 'tool') {
+              if (cost <= budget) {
+                kept.push(msg);
+                budget -= cost;
+
+                // If this assistant has toolCalls, also collect its tool results
+                if (msg.role === 'assistant' && msg.toolCalls) {
+                  const tcIds = new Set(msg.toolCalls.map(tc => tc.id));
+                  for (let k = i + 1; k < messages.length; k++) {
+                    if (messages[k].role === 'tool' && messages[k].toolCallId && tcIds.has(messages[k].toolCallId!)) {
+                      const tkCost = Agent.estimateTokens(messages[k]);
+                      if (tkCost <= budget) {
+                        kept.push(messages[k]);
+                        budget -= tkCost;
+                      }
+                    }
+                    if (messages[k].role === 'user' || (messages[k].role === 'assistant' && !messages[k].toolCalls)) break;
+                  }
+                }
+              }
+            }
+          }
+
+          // Reverse to get chronological order, then clean orphan tools
+          kept.reverse();
+
+          // Remove orphan tool messages (no preceding assistant-with-toolCalls kept)
+          const finalMessages = kept.filter((msg, idx, arr) => {
+            if (msg.role !== 'tool') return true;
+            for (let j = idx - 1; j >= 0; j--) {
+              if (arr[j].role === 'assistant' && arr[j].toolCalls) {
+                return arr[j].toolCalls!.some(tc => tc.id === msg.toolCallId);
+              }
+              if (arr[j].role === 'user') break;
+            }
+            return false;
+          });
+
+          messages = finalMessages;
+          const keptTokens = safeThreshold - budget;
+          console.log(`📏 Trimmed to ${messages.length} messages (~${keptTokens.toLocaleString()} estimated tokens).`);
         }
       }
 
@@ -469,6 +541,10 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       }
     } else if (message.action === 'retry_continue') {
       // Do not add any new message, just resume reasoning
+    } else if (message.action === 'gateway_restarted') {
+      // Inject a system message about gateway restart so the model knows what happened
+      const restartNotice = `[System Notice]: The gateway service was restarted at ${new Date().toISOString()}. Continue the conversation naturally. If you were in the middle of an operation, you may need to re-perform it or inform the user about the restart.`;
+      messages.push({ role: 'system', content: restartNotice });
     } else {
       // Minify user input to save tokens
       const minifiedContent = message.content.replace(/\n{3,}/g, '\n\n').trim();

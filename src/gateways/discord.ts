@@ -15,14 +15,19 @@ import {
 } from 'discord.js';
 import type { Gateway, MessageHandler, AgentEvent } from './types.js';
 import type { AgentConfig } from '../config.js';
+import { saveConfig } from '../config.js';
 
 // ─── Discord Gateway ─────────────────────────────────────────
 
 export class DiscordGateway implements Gateway {
   private client: Client;
   private config: AgentConfig;
+  /** Stored handler reference for slash commands that dispatch through the queue */
+  private handler!: MessageHandler;
   /** Per-session serial chain: each send waits for the previous one to finish */
   private sendChains: Map<string, Promise<void>> = new Map();
+  /** Set to true during shutdown to prevent sends after client is destroyed */
+  private destroyed = false;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -40,10 +45,19 @@ export class DiscordGateway implements Gateway {
    * Serialize all Discord messages for a given sessionId.
    * Each call waits for the previous send to fully complete before starting,
    * preventing chunk interleaving when onEvent is called fire-and-forget.
+   * During shutdown (destroyed=true), sends are silently dropped.
    */
   private enqueueSend(sessionId: string, sendFn: () => Promise<void>): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+
     const prev = this.sendChains.get(sessionId) ?? Promise.resolve();
-    const next = prev.then(() => sendFn()).catch(() => sendFn());
+    const next = prev.then(() => {
+      if (this.destroyed) return;
+      return sendFn();
+    }).catch((err) => {
+      if (this.destroyed) return;
+      return sendFn();
+    });
     this.sendChains.set(sessionId, next);
     return next;
   }
@@ -112,20 +126,15 @@ export class DiscordGateway implements Gateway {
   private async registerCommands(token: string, clientId: string): Promise<void> {
     const ourCommands = [
       new SlashCommandBuilder()
-        .setName('chat')
-        .setDescription('Talk to the AI agent')
-        .addStringOption((option) =>
-          option
-            .setName('prompt')
-            .setDescription('Your message to the agent')
-            .setRequired(true),
-        ),
-      new SlashCommandBuilder()
         .setName('reset')
         .setDescription('Reset the current session context'),
       new SlashCommandBuilder()
-        .setName('resetmemory')
-        .setDescription("Delete the agent's permanent memory and reset session"),
+        .setName('model')
+        .setDescription('Select or change the AI model')
+        .addStringOption((option) =>
+          option.setName('provider').setDescription('Provider name (e.g. gemini, openrouter)').setRequired(false))
+        .addStringOption((option) =>
+          option.setName('model').setDescription('Model name (e.g. gemini-2.5-flash)').setRequired(false)),
     ];
 
     const ourNames = new Set(ourCommands.map((c) => c.name));
@@ -165,6 +174,7 @@ export class DiscordGateway implements Gateway {
   }
 
   async start(handler: MessageHandler): Promise<void> {
+    this.handler = handler;
     const { token, allowedChannels } = this.config.discord;
 
     if (!token) {
@@ -184,6 +194,123 @@ export class DiscordGateway implements Gateway {
     });
 
     this.client.on('interactionCreate', async (interaction: Interaction) => {
+      // ── Model Selection: provider pick ─────────────────────
+      if (interaction.isButton() && interaction.customId.startsWith('cfg_prov_')) {
+        const idx = parseInt(interaction.customId.replace('cfg_prov_', ''), 10);
+        const state = DiscordGateway.modelSelectionState.get(interaction.user.id);
+        if (!state || idx >= state.providerNames.length) {
+          await interaction.reply({ content: '❌ Session expired. Please run `/model` again.', ephemeral: true });
+          return;
+        }
+
+        const providerName = state.providerNames[idx];
+        const provider = this.config.providers[providerName];
+        await interaction.deferUpdate();
+
+        // Fetch models
+        let models: string[] = [];
+        try {
+          if (provider.type === 'gemini' && provider.apiKey) {
+            models = await DiscordGateway.fetchGeminiModels(provider.apiKey);
+          } else if (provider.type === 'openai-compatible' && provider.baseURL && provider.apiKey) {
+            models = await DiscordGateway.fetchOpenAIModels(provider.baseURL, provider.apiKey);
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        if (models.length === 0) {
+          // Show a modal for manual entry
+          const cleanName = providerName.replace(/[^a-zA-Z0-9_-]/g, '');
+          const modal = new ModalBuilder()
+            .setCustomId(`model_manual_${cleanName}`)
+            .setTitle(`Enter model name for ${providerName}`);
+
+          const input = new TextInputBuilder()
+            .setCustomId('model_name')
+            .setLabel('Model name')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+
+          modal.addComponents(new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(input));
+          await interaction.followUp({ content: '⚙️ No models auto-detected. Please enter the model name manually.', ephemeral: true });
+          await interaction.showModal(modal);
+          return;
+        }
+
+        // Build model buttons (max 5 per row)
+        const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+        let currentRow = new ActionRowBuilder<ButtonBuilder>();
+        for (let i = 0; i < models.length; i++) {
+          if (currentRow.components.length === 5) {
+            rows.push(currentRow);
+            currentRow = new ActionRowBuilder<ButtonBuilder>();
+          }
+          currentRow.addComponents(
+            new ButtonBuilder()
+              .setCustomId(`cfg_model_${i}`)
+              .setLabel(models[i].length > 80 ? models[i].substring(0, 77) + '…' : models[i])
+              .setStyle(ButtonStyle.Secondary),
+          );
+        }
+        if (currentRow.components.length > 0) rows.push(currentRow);
+
+        state.models = models;
+        state.selectedProvider = providerName;
+        DiscordGateway.modelSelectionState.set(interaction.user.id, state);
+
+        await interaction.editReply({ content: `**Select a model from \`${providerName}\`:**`, components: rows });
+        return;
+      }
+
+      // ── Model Selection: model pick ─────────────────────
+      if (interaction.isButton() && interaction.customId.startsWith('cfg_model_')) {
+        const idx = parseInt(interaction.customId.replace('cfg_model_', ''), 10);
+        const state = DiscordGateway.modelSelectionState.get(interaction.user.id);
+        if (!state || !state.models || idx >= state.models.length || !state.selectedProvider) {
+          await interaction.reply({ content: '❌ Session expired. Please run `/model` again.', ephemeral: true });
+          return;
+        }
+
+        const modelName = state.models[idx];
+        const providerName = state.selectedProvider;
+
+        // Update config
+        this.config.models.main.provider = providerName;
+        this.config.models.main.model = modelName;
+        saveConfig(this.config);
+
+        DiscordGateway.modelSelectionState.delete(interaction.user.id);
+
+        await interaction.update({
+          content: `✅ Model updated to **${modelName}** (via \`${providerName}\`)`,
+          components: [],
+        });
+        return;
+      }
+
+      // ── Model Manual Modal Submit ───────────────────────
+      if (interaction.isModalSubmit() && interaction.customId.startsWith('model_manual_')) {
+        const cleanName = interaction.customId.replace('model_manual_', '');
+        const state = DiscordGateway.modelSelectionState.get(interaction.user.id);
+        if (!state || !state.selectedProvider) {
+          await interaction.reply({ content: '❌ Session expired. Please run `/model` again.', ephemeral: true });
+          return;
+        }
+        const modelName = interaction.fields.getTextInputValue('model_name').trim();
+        if (!modelName) {
+          await interaction.reply({ content: '❌ Model name cannot be empty.', ephemeral: true });
+          return;
+        }
+        const providerName = state.selectedProvider;
+        this.config.models.main.provider = providerName;
+        this.config.models.main.model = modelName;
+        saveConfig(this.config);
+        DiscordGateway.modelSelectionState.delete(interaction.user.id);
+        await interaction.reply({ content: `✅ Model updated to **${modelName}** (via \`${providerName}\`)`, components: [] });
+        return;
+      }
+
       if (interaction.isButton() && interaction.customId.startsWith('retry_')) {
         const action = interaction.customId.startsWith('retry_continue_') ? 'retry_continue' : 'retry_restart';
         const sessionId = interaction.customId.replace(action + '_', '');
@@ -211,7 +338,7 @@ export class DiscordGateway implements Gateway {
 
         try {
           await handler(
-            { sessionId, userId: interaction.user.id, userName: interaction.user.username, content: '', action },
+            { sessionId, userId: interaction.user.id, userName: interaction.user.username, content: '', action, gateway: 'discord' },
             async (event: AgentEvent) => {
               let msg = '';
               if (event.type === 'thinking' && this.config.logging.showThinking) {
@@ -270,7 +397,7 @@ export class DiscordGateway implements Gateway {
 
         try {
           await handler(
-            { sessionId, userId: interactionToReply.user.id, userName: interactionToReply.user.username, content: answerText },
+            { sessionId, userId: interactionToReply.user.id, userName: interactionToReply.user.username, content: answerText, gateway: 'discord' },
             async (event: AgentEvent) => {
               let msg = '';
               let extraComps: any[] | undefined;
@@ -377,99 +504,20 @@ export class DiscordGateway implements Gateway {
       }
 
       const sessionId = `discord-${interaction.channelId}`;
-      let content = '';
 
-      if (interaction.commandName === 'chat') {
-        content = interaction.options.getString('prompt', true);
+      if (interaction.commandName === 'model') {
+        await this.handleModelCommand(interaction);
+        return;
       } else if (interaction.commandName === 'reset') {
-        content = '/reset';
-      } else if (interaction.commandName === 'resetmemory') {
-        content = '/resetmemory';
+        // Handle /reset — send to agent
+        await interaction.reply('⏳ 任務已收到！(Task received!)');
+        const content = '/reset';
+        await this.processSlashCommand(sessionId, interaction, content);
+        return;
       } else {
         return;
       }
 
-      await interaction.reply('⏳ 任務已收到！(Task received!)');
-
-      let hasEditedInitialReply = false;
-
-      // Helper to dispatch chunks in real-time
-      const sendDiscordMessage = async (msgText: string, isFinalText = false, isError = false, extraComponents?: any[]) => {
-        await this.enqueueSend(sessionId, async () => {
-          const chunks = this.splitMessage(msgText);
-          for (let i = 0; i < chunks.length; i++) {
-            const opts = this.buildChunkOptions(chunks[i], i === chunks.length - 1, isError, sessionId, extraComponents);
-
-            if ((isFinalText) && !hasEditedInitialReply) {
-              await interaction.editReply(opts);
-              hasEditedInitialReply = true;
-            } else {
-              if (interaction.channel && 'send' in interaction.channel) {
-                await (interaction.channel as any).send(opts);
-              } else {
-                await interaction.followUp(opts);
-              }
-            }
-          }
-        });
-      };
-
-      let typingInterval: NodeJS.Timeout | undefined;
-      if (interaction.channel && 'sendTyping' in interaction.channel) {
-        (interaction.channel as any).sendTyping().catch(() => {});
-        typingInterval = setInterval(() => {
-          (interaction.channel as any).sendTyping().catch(() => {});
-        }, 8000);
-      }
-
-      try {
-        await handler(
-          { sessionId, userId: interaction.user.id, content },
-          async (event: AgentEvent) => {
-            let msg = '';
-            let extraComps: any[] | undefined;
-
-            if (event.type === 'thinking' && this.config.logging.showThinking) {
-              msg = `💭 **Thinking...**\n\`\`\`\n${event.content}\n\`\`\``;
-            } else if (event.type === 'provider_log') {
-              msg = `📡 ${event.content}`;
-            } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
-                const path = event.content;
-                msg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(path, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;
-              } else if (event.type === 'tool_result' && this.config.logging.showToolResults) {
-                // Tool results are hidden
-              } else if (event.type === 'ask') {
-                const expectedId = (event.metadata?.userId as string) || '';
-                const options = (event.metadata?.options as string[]) || [];
-              const row = new ActionRowBuilder<ButtonBuilder>();
-              options.forEach((opt, idx) => {
-                row.addComponents(new ButtonBuilder().setCustomId(`answer_${sessionId}_${expectedId}_${idx}`).setLabel(opt.substring(0, 80)).setStyle(ButtonStyle.Primary));
-              });
-              extraComps = [row];
-            } else if (event.type === 'text') {
-              msg = event.content;
-            } else if (event.type === 'error') {
-              msg = `❌ **Error**: ${event.content}`;
-            }
-
-            if (msg) {
-              const isFinal = event.type === 'text' || event.type === 'error' || event.type === 'ask';
-              await sendDiscordMessage(msg, isFinal, event.type === 'error', extraComps);
-            }
-          },
-        );
-
-        // No fallback edit needed since we replied immediately
-      } catch (err) {
-        const errorMsg = `❌ Error: ${err instanceof Error ? err.message : String(err)}`;
-        if (interaction.channel && 'send' in interaction.channel) {
-          await (interaction.channel as any).send(errorMsg);
-        } else {
-          await interaction.followUp(errorMsg);
-        }
-      } finally {
-        if (typingInterval) clearInterval(typingInterval);
-      }
     });
 
     // Support legacy @mention
@@ -523,7 +571,7 @@ export class DiscordGateway implements Gateway {
 
       try {
         await handler(
-          { sessionId, userId: msg.author.id, userName: msg.author.username, content },
+          { sessionId, userId: msg.author.id, userName: msg.author.username, content, gateway: 'discord' },
           async (event: AgentEvent) => {
             let replyMsg = '';
             let extraComps: any[] | undefined;
@@ -575,7 +623,233 @@ export class DiscordGateway implements Gateway {
     });
   }
 
+  /**
+   * Create an event handler for a recovered session (gateway restart recovery).
+   * Parses the channel ID from the session ID (format: "discord-{channelId}")
+   * and returns an AgentEventHandler that sends messages to that channel.
+   * Returns null if the channel cannot be resolved.
+   */
+  async createSessionEventHandler(sessionId: string): Promise<import('./types.js').AgentEventHandler | null> {
+    const prefix = 'discord-';
+    if (!sessionId.startsWith(prefix)) return null;
+    const channelId = sessionId.substring(prefix.length);
+
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !('send' in channel)) return null;
+
+      const textChannel = channel as any;
+
+      return async (event: import('./types.js').AgentEvent) => {
+        if (this.destroyed) return;
+
+        let msg = '';
+        if (event.type === 'thinking' && this.config.logging.showThinking) {
+          msg = event.content;
+        } else if (event.type === 'provider_log') {
+          msg = `📡 ${event.content}`;
+        } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
+          msg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(event.content, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;
+        } else if (event.type === 'text') {
+          msg = event.content;
+        } else if (event.type === 'error') {
+          msg = `❌ **Error**: ${event.content}`;
+        }
+
+        if (msg) {
+          const chunks = this.splitMessage(msg);
+          for (const chunk of chunks) {
+            try {
+              if (this.destroyed) return;
+              await textChannel.send(chunk);
+            } catch (e) {
+              // Ignore send errors during recovery
+            }
+          }
+        }
+      };
+    } catch (err) {
+      console.error(`[Discord Recovery] Failed to create event handler for session ${sessionId}:`, err);
+      return null;
+    }
+  }
+
+  // ─── Model Selection State (keyed by userId) ─────────────
+  private static modelSelectionState = new Map<string, {
+    providerNames: string[];
+    models?: string[];
+    selectedProvider?: string;
+  }>();
+
+  /** Process a slash command through the handler (used by /reset) */
+  private async processSlashCommand(
+    sessionId: string,
+    interaction: any,
+    content: string,
+  ): Promise<void> {
+    let hasEditedInitialReply = false;
+
+    const sendDiscordMessage = async (msgText: string, isFinalText = false, isError = false, extraComponents?: any[]) => {
+      await this.enqueueSend(sessionId, async () => {
+        const chunks = this.splitMessage(msgText);
+        for (let i = 0; i < chunks.length; i++) {
+          const opts = this.buildChunkOptions(chunks[i], i === chunks.length - 1, isError, sessionId, extraComponents);
+
+          if ((isFinalText) && !hasEditedInitialReply) {
+            await interaction.editReply(opts);
+            hasEditedInitialReply = true;
+          } else {
+            if (interaction.channel && 'send' in interaction.channel) {
+              await (interaction.channel as any).send(opts);
+            } else {
+              await interaction.followUp(opts);
+            }
+          }
+        }
+      });
+    };
+
+    let typingInterval: NodeJS.Timeout | undefined;
+    if (interaction.channel && 'sendTyping' in interaction.channel) {
+      (interaction.channel as any).sendTyping().catch(() => {});
+      typingInterval = setInterval(() => {
+        (interaction.channel as any).sendTyping().catch(() => {});
+      }, 8000);
+    }
+
+    try {
+      await this.handler(
+        { sessionId, userId: interaction.user.id, content, gateway: 'discord' },
+        async (event: AgentEvent) => {
+          let msg = '';
+          let extraComps: any[] | undefined;
+
+          if (event.type === 'thinking' && this.config.logging.showThinking) {
+            msg = `💭 **Thinking...**\n\`\`\`\n${event.content}\n\`\`\``;
+          } else if (event.type === 'provider_log') {
+            msg = `📡 ${event.content}`;
+          } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
+            msg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(event.content, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;
+          } else if (event.type === 'tool_result' && this.config.logging.showToolResults) {
+            // Tool results are hidden
+          } else if (event.type === 'ask') {
+            const expectedId = (event.metadata?.userId as string) || '';
+            const options = (event.metadata?.options as string[]) || [];
+            const row = new ActionRowBuilder<ButtonBuilder>();
+            options.forEach((opt, idx) => {
+              row.addComponents(new ButtonBuilder().setCustomId(`answer_${sessionId}_${expectedId}_${idx}`).setLabel(opt.substring(0, 80)).setStyle(ButtonStyle.Primary));
+            });
+            extraComps = [row];
+          } else if (event.type === 'text') {
+            msg = event.content;
+          } else if (event.type === 'error') {
+            msg = `❌ **Error**: ${event.content}`;
+          }
+
+          if (msg) {
+            const isFinal = event.type === 'text' || event.type === 'error' || event.type === 'ask';
+            await sendDiscordMessage(msg, isFinal, event.type === 'error', extraComps);
+          }
+        },
+      );
+    } catch (err) {
+      const errorMsg = `❌ Error: ${err instanceof Error ? err.message : String(err)}`;
+      if (interaction.channel && 'send' in interaction.channel) {
+        await (interaction.channel as any).send(errorMsg);
+      } else {
+        await interaction.followUp(errorMsg);
+      }
+    } finally {
+      if (typingInterval) clearInterval(typingInterval);
+    }
+  }
+
+  /** Handle the /model slash command */
+  private async handleModelCommand(interaction: any): Promise<void> {
+    const provider = interaction.options.getString('provider');
+    const model = interaction.options.getString('model');
+
+    // ── Case: both provider and model provided ─────────────
+    if (provider && model) {
+      if (!this.config.providers[provider]) {
+        await interaction.reply({ content: `❌ Provider \`${provider}\` not found in config.`, ephemeral: true });
+        return;
+      }
+      this.config.models.main.provider = provider;
+      this.config.models.main.model = model;
+      saveConfig(this.config);
+      await interaction.reply({ content: `✅ Model updated to **${model}** (via \`${provider}\`)`, ephemeral: false });
+      return;
+    }
+
+    // ── Case: no args — show provider picker ──────────────
+    const providerNames = Object.keys(this.config.providers).filter(p => this.config.providers[p].apiKey);
+    if (providerNames.length === 0) {
+      await interaction.reply({ content: '❌ No providers with API keys configured. Run `idkagent setup` first.', ephemeral: true });
+      return;
+    }
+
+    // Store state for this user
+    DiscordGateway.modelSelectionState.set(interaction.user.id, { providerNames });
+
+    // Build provider selection buttons (max 5 per row)
+    const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+    let currentRow = new ActionRowBuilder<ButtonBuilder>();
+    for (let i = 0; i < providerNames.length; i++) {
+      if (currentRow.components.length === 5) {
+        rows.push(currentRow);
+        currentRow = new ActionRowBuilder<ButtonBuilder>();
+      }
+      currentRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`cfg_prov_${i}`)
+          .setLabel(providerNames[i])
+          .setStyle(ButtonStyle.Primary),
+      );
+    }
+    if (currentRow.components.length > 0) rows.push(currentRow);
+
+    await interaction.reply({ content: '**Select a provider:**', components: rows, ephemeral: false });
+  }
+
+  /** Fetch models from Gemini API */
+  private static async fetchGeminiModels(apiKey: string): Promise<string[]> {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { models?: Array<{ name: string; supportedGenerationMethods: string[] }> };
+      if (!data.models) return [];
+      return data.models
+        .filter((m) => m.supportedGenerationMethods.includes('generateContent'))
+        .map((m) => m.name.replace('models/', ''))
+        .filter((name) => !name.includes('-thinking') && !name.includes('-flash-lite'))
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /** Fetch models from an OpenAI-compatible API */
+  private static async fetchOpenAIModels(baseURL: string, apiKey: string): Promise<string[]> {
+    try {
+      const url = baseURL.replace(/\/+$/, '') + '/models';
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { data?: Array<{ id: string }> };
+      if (!data.data) return [];
+      const models = data.data.map((m) => m.id).filter(Boolean).sort();
+      return models.length > 50 ? models.slice(0, 50) : models;
+    } catch {
+      return [];
+    }
+  }
+
   stop(): Promise<void> {
+    this.destroyed = true;
+    // Clear pending send chains so they don't try to use the destroyed client
+    this.sendChains.clear();
     return new Promise((resolve) => {
       const dispose = this.client.destroy();
       dispose.then(resolve).catch(resolve);

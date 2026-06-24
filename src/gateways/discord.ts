@@ -7,13 +7,15 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
   type ModalActionRowComponentBuilder,
   type Interaction,
 } from 'discord.js';
-import type { Gateway, MessageHandler, AgentEvent } from './types.js';
+import type { Gateway, GatewayStartOptions, MessageHandler, AgentEvent } from './types.js';
 import type { AgentConfig } from '../config.js';
 import { saveConfig } from '../config.js';
 
@@ -24,6 +26,8 @@ export class DiscordGateway implements Gateway {
   private config: AgentConfig;
   /** Stored handler reference for slash commands that dispatch through the queue */
   private handler!: MessageHandler;
+  /** Callback to cancel a running session (bypasses the queue) */
+  private cancelSession?: (sessionId: string) => void;
   /** Per-session serial chain: each send waits for the previous one to finish */
   private sendChains: Map<string, Promise<void>> = new Map();
   /** Set to true during shutdown to prevent sends after client is destroyed */
@@ -135,6 +139,9 @@ export class DiscordGateway implements Gateway {
           option.setName('provider').setDescription('Provider name (e.g. gemini, openrouter)').setRequired(false))
         .addStringOption((option) =>
           option.setName('model').setDescription('Model name (e.g. gemini-2.5-flash)').setRequired(false)),
+      new SlashCommandBuilder()
+        .setName('stop')
+        .setDescription('Stop the current conversation'),
     ];
 
     const ourNames = new Set(ourCommands.map((c) => c.name));
@@ -173,8 +180,9 @@ export class DiscordGateway implements Gateway {
     }
   }
 
-  async start(handler: MessageHandler): Promise<void> {
+  async start(handler: MessageHandler, options?: GatewayStartOptions): Promise<void> {
     this.handler = handler;
+    this.cancelSession = options?.cancelSession;
     const { token, allowedChannels } = this.config.discord;
 
     if (!token) {
@@ -194,16 +202,15 @@ export class DiscordGateway implements Gateway {
     });
 
     this.client.on('interactionCreate', async (interaction: Interaction) => {
-      // ── Model Selection: provider pick ─────────────────────
-      if (interaction.isButton() && interaction.customId.startsWith('cfg_prov_')) {
-        const idx = parseInt(interaction.customId.replace('cfg_prov_', ''), 10);
+      // ── Model Selection: provider pick (dropdown) ────────
+      if (interaction.isStringSelectMenu() && interaction.customId === 'cfg_prov_select') {
         const state = DiscordGateway.modelSelectionState.get(interaction.user.id);
-        if (!state || idx >= state.providerNames.length) {
+        if (!state) {
           await interaction.reply({ content: '❌ Session expired. Please run `/model` again.', ephemeral: true });
           return;
         }
 
-        const providerName = state.providerNames[idx];
+        const providerName = interaction.values[0];
         const provider = this.config.providers[providerName];
         await interaction.deferUpdate();
 
@@ -238,41 +245,39 @@ export class DiscordGateway implements Gateway {
           return;
         }
 
-        // Build model buttons (max 5 per row)
-        const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-        let currentRow = new ActionRowBuilder<ButtonBuilder>();
-        for (let i = 0; i < models.length; i++) {
-          if (currentRow.components.length === 5) {
-            rows.push(currentRow);
-            currentRow = new ActionRowBuilder<ButtonBuilder>();
-          }
-          currentRow.addComponents(
-            new ButtonBuilder()
-              .setCustomId(`cfg_model_${i}`)
-              .setLabel(models[i].length > 80 ? models[i].substring(0, 77) + '…' : models[i])
-              .setStyle(ButtonStyle.Secondary),
+        // Build model selection dropdown (max 25 options per Discord limit)
+        const displayModels = models.length > 25 ? models.slice(0, 25) : models;
+        const modelSelect = new StringSelectMenuBuilder()
+          .setCustomId('cfg_model_select')
+          .setPlaceholder('Select a model...')
+          .addOptions(
+            displayModels.map((m) =>
+              new StringSelectMenuOptionBuilder()
+                .setLabel(m.length > 100 ? m.substring(0, 97) + '…' : m)
+                .setValue(m),
+            ),
           );
-        }
-        if (currentRow.components.length > 0) rows.push(currentRow);
 
         state.models = models;
         state.selectedProvider = providerName;
         DiscordGateway.modelSelectionState.set(interaction.user.id, state);
 
-        await interaction.editReply({ content: `**Select a model from \`${providerName}\`:**`, components: rows });
+        await interaction.editReply({
+          content: `**Select a model from \`${providerName}\`:**${models.length > 25 ? '\n*(showing first 25 of ' + models.length + ' models)*' : ''}`,
+          components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(modelSelect)],
+        });
         return;
       }
 
-      // ── Model Selection: model pick ─────────────────────
-      if (interaction.isButton() && interaction.customId.startsWith('cfg_model_')) {
-        const idx = parseInt(interaction.customId.replace('cfg_model_', ''), 10);
+      // ── Model Selection: model pick (dropdown) ──────────
+      if (interaction.isStringSelectMenu() && interaction.customId === 'cfg_model_select') {
         const state = DiscordGateway.modelSelectionState.get(interaction.user.id);
-        if (!state || !state.models || idx >= state.models.length || !state.selectedProvider) {
+        if (!state || !state.selectedProvider) {
           await interaction.reply({ content: '❌ Session expired. Please run `/model` again.', ephemeral: true });
           return;
         }
 
-        const modelName = state.models[idx];
+        const modelName = interaction.values[0];
         const providerName = state.selectedProvider;
 
         // Update config
@@ -513,6 +518,19 @@ export class DiscordGateway implements Gateway {
         await interaction.reply('⏳ 任務已收到！(Task received!)');
         const content = '/reset';
         await this.processSlashCommand(sessionId, interaction, content);
+        return;
+      } else if (interaction.commandName === 'stop') {
+        // Handle /stop — cancel the current conversation immediately (bypass queue)
+        await interaction.reply('⏹️ 正在停止對話... (Stopping conversation...)');
+        if (this.cancelSession) {
+          this.cancelSession(sessionId);
+        } else {
+          // Fallback: send through queue with stop action
+          await this.handler(
+            { sessionId, userId: interaction.user.id, content: '', action: 'stop', gateway: 'discord' },
+            () => {},
+          );
+        }
         return;
       } else {
         return;
@@ -782,7 +800,7 @@ export class DiscordGateway implements Gateway {
       return;
     }
 
-    // ── Case: no args — show provider picker ──────────────
+    // ── Case: no args — show provider dropdown ──────────
     const providerNames = Object.keys(this.config.providers).filter(p => this.config.providers[p].apiKey);
     if (providerNames.length === 0) {
       await interaction.reply({ content: '❌ No providers with API keys configured. Run `idkagent setup` first.', ephemeral: true });
@@ -792,24 +810,24 @@ export class DiscordGateway implements Gateway {
     // Store state for this user
     DiscordGateway.modelSelectionState.set(interaction.user.id, { providerNames });
 
-    // Build provider selection buttons (max 5 per row)
-    const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-    let currentRow = new ActionRowBuilder<ButtonBuilder>();
-    for (let i = 0; i < providerNames.length; i++) {
-      if (currentRow.components.length === 5) {
-        rows.push(currentRow);
-        currentRow = new ActionRowBuilder<ButtonBuilder>();
-      }
-      currentRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cfg_prov_${i}`)
-          .setLabel(providerNames[i])
-          .setStyle(ButtonStyle.Primary),
+    // Build provider selection dropdown
+    const select = new StringSelectMenuBuilder()
+      .setCustomId('cfg_prov_select')
+      .setPlaceholder('Choose a provider...')
+      .addOptions(
+        providerNames.map((name) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(name)
+            .setValue(name)
+            .setDescription(`Switch to ${name} provider`),
+        ),
       );
-    }
-    if (currentRow.components.length > 0) rows.push(currentRow);
 
-    await interaction.reply({ content: '**Select a provider:**', components: rows, ephemeral: false });
+    await interaction.reply({
+      content: '**Select a provider:**',
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+      ephemeral: false,
+    });
   }
 
   /** Fetch models from Gemini API */

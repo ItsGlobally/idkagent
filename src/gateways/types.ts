@@ -1,11 +1,16 @@
 // ─── Gateway Types ───────────────────────────────────────────
 
+export interface GatewayStartOptions {
+  /** Called when a user wants to stop/cancel the current conversation for a given session */
+  cancelSession?: (sessionId: string) => void;
+}
+
 export interface GatewayMessage {
   sessionId: string;
   userId: string;
   userName?: string;
   content: string;
-  action?: 'retry_continue' | 'retry_restart' | 'gateway_restarted';
+  action?: 'retry_continue' | 'retry_restart' | 'gateway_restarted' | 'stop';
   /** Gateway platform identifier, e.g. 'discord', 'cli' */
   gateway?: string;
 }
@@ -24,7 +29,7 @@ export type MessageHandler = (
 ) => Promise<void>;
 
 export interface Gateway {
-  start(handler: MessageHandler): Promise<void>;
+  start(handler: MessageHandler, options?: GatewayStartOptions): Promise<void>;
   stop(): Promise<void>;
   /**
    * Optional: Create an event handler for a recovered session.

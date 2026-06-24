@@ -19,6 +19,7 @@ export class Agent {
   private static activeSubAgentsCount = 0;
   private static readonly MAX_SUBAGENTS = 5;
   private usageMap: Map<string, { promptTokens: number; completionTokens: number }> = new Map();
+  private cancelledSessions: Set<string> = new Set();
 
   constructor(
     providers: { main: LLMProvider; fallback?: LLMProvider; guardrail?: LLMProvider },
@@ -458,6 +459,16 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     }
   }
 
+  /** Cancel a running session (called from gateway, bypasses the queue) */
+  cancelSession(sessionId: string): void {
+    this.cancelledSessions.add(sessionId);
+    // Clear any pending queue items so they don't run after the current task is cancelled
+    const queue = this.sessionQueues.get(sessionId);
+    if (queue) {
+      queue.length = 0;
+    }
+  }
+
   /** Clear a session's history */
   clearSession(sessionId: string): void {
     this.sessions.delete(sessionId);
@@ -529,7 +540,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       return;
     }
 
-    // Snapshot usage at the start so we can compute per-turn delta
+    // Snapshot usage at the start — used to compute per-message token total
     const usageBefore = this.usageMap.get(message.sessionId) || { promptTokens: 0, completionTokens: 0 };
 
     const messages = this.getSession(message.sessionId);
@@ -541,6 +552,11 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       }
     } else if (message.action === 'retry_continue') {
       // Do not add any new message, just resume reasoning
+    } else if (message.action === 'stop') {
+      // Cancel this session and return immediately
+      this.cancelSession(message.sessionId);
+      onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
+      return;
     } else if (message.action === 'gateway_restarted') {
       // Inject a system message about gateway restart so the model knows what happened
       const restartNotice = `[System Notice]: The gateway service was restarted at ${new Date().toISOString()}. Continue the conversation naturally. If you were in the middle of an operation, you may need to re-perform it or inform the user about the restart.`;
@@ -623,6 +639,19 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
 
     while (iterations < MAX_ITERATIONS) {
       iterations++;
+
+      // Check for session cancellation (triggered by /stop or cancelSession())
+      if (this.cancelledSessions.has(message.sessionId)) {
+        this.cancelledSessions.delete(message.sessionId);
+        // Remove incomplete assistant+tool chain back to last user message
+        while (messages.length > 0 && messages[messages.length - 1].role !== 'user') {
+          messages.pop();
+        }
+        this.sessions.set(message.sessionId, messages);
+        this.saveSession(message.sessionId);
+        onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
+        return;
+      }
 
       // Remove tool messages that have no preceding assistant with tool_calls
       for (let i = messages.length - 1; i >= 0; i--) {

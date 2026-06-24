@@ -234,8 +234,10 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
   try {
     // Start all enabled gateways concurrently, each with the shared queue
     await Promise.all(gateways.map((gw) =>
-      gw.start((message, onEvent) =>
-        queue.enqueue(message, (msg, ev) => agent.handleMessage(msg, ev), onEvent),
+      gw.start(
+        (message, onEvent) =>
+          queue.enqueue(message, (msg, ev) => agent.handleMessage(msg, ev), onEvent),
+        { cancelSession: (sessionId) => agent.cancelSession(sessionId) },
       ),
     ));
 

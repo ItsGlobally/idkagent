@@ -1,5 +1,5 @@
 import readline from 'node:readline';
-import type { Gateway, MessageHandler } from './types.js';
+import type { Gateway, GatewayStartOptions, MessageHandler } from './types.js';
 import { CLILogger } from '../logger.js';
 import type { LoggingConfig } from '../config.js';
 
@@ -24,7 +24,7 @@ export class CLIGateway implements Gateway {
     this.logger = new CLILogger(loggingConfig);
   }
 
-  async start(handler: MessageHandler): Promise<void> {
+  async start(handler: MessageHandler, _options?: GatewayStartOptions): Promise<void> {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,

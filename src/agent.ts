@@ -123,19 +123,11 @@ export class Agent {
     }));
   }
 
-  /** When tools are disabled, only allow read, write, patch, search, fetch, analyze_image, and java tools.
-   * 'disableTool' means 'disable developer tools' (bash, credential, git, project, ask, run_js, etc.),
-   * not 'disable all tools'. */
+  /** When tools are disabled, only allow search, fetch, and analyze_image.
+   * 'disableTool' means disable all file system and developer tools. */
   private getSafeToolDefinitions(): ToolDefinition[] {
-    // Allowed tools when disableTool is true:
-    // - File operations: read_file, create_file, patch_file, list_dir (safe for reading code)
-    // - API-based: search, fetch, analyze_image
-    // - Java tooling: java_index, java_find_method, java_find_class, java_show_class, etc.
     const allowed = [
-      'read_file', 'create_file', 'patch_file', 'list_dir',
       'search', 'fetch', 'analyze_image',
-      'java_index', 'java_find_method', 'java_find_class', 'java_show_class',
-      'java_show_method', 'java_index_info', 'java_index_clear',
     ];
     return this.tools
       .filter((t) => allowed.includes(t.name))
@@ -149,7 +141,7 @@ export class Agent {
   private loadSystemPrompt(): string {
     let prompt: string;
     if (this.config.disableTool) {
-      prompt = 'You are a helpful coding assistant with restricted capabilities. You can read and write files, search the web, fetch URLs, and analyze images. You do NOT have access to command execution, credential management, git operations, or other developer tools. Keep your answers concise and natural.';
+      prompt = 'You are a helpful assistant with web search and URL fetching capabilities. You can search the web using the search tool and fetch web pages using the fetch tool. You do NOT have access to any file system, command execution, or other developer tools. Keep your answers concise and natural.';
     } else {
       prompt = 'You are a helpful coding assistant. You have access to tools for reading, creating, and modifying files, listing directories, and running commands. Use these tools to help the user with their coding tasks. Think step by step before taking action.';
     }
@@ -173,7 +165,7 @@ export class Agent {
 
     if (this.config.disableTool) {
       prompt += `\n\n[System Note]:
-You are in restricted mode — you only have access to file operations (read, write, patch, list), web search, URL fetching, image analysis, and Java tooling. You do NOT have access to command execution, credential management, git operations, project management, task delegation, or other developer tools.
+You are in limited mode — you only have access to the search and fetch tools. You do NOT have any file system, command execution, credential, or other developer tools available.
 Your default working directory is workspace/. All relative file paths resolve there unless you specify an absolute path.`;
     } else {
       prompt += `\n\n[System Note:
@@ -822,14 +814,11 @@ Continue the conversation naturally after assessing the situation.`;
         // If tools are disabled, reject unexpected tool calls (safety check)
         if (this.config.disableTool) {
           const allowed = [
-            'read_file', 'create_file', 'patch_file', 'list_dir',
             'search', 'fetch', 'analyze_image',
-            'java_index', 'java_find_method', 'java_find_class', 'java_show_class',
-            'java_show_method', 'java_index_info', 'java_index_clear',
           ];
           const hasUnsafe = response.toolCalls.some(tc => !allowed.includes(tc.name));
           if (hasUnsafe) {
-            const text = response.content || '[Tool calls are restricted in restricted mode.]';
+            const text = response.content || '[Tool calls are disabled in pure chat mode.]';
             // Append token line to displayed message only, don't save to history
             const usage = this.usageMap.get(message.sessionId);
             let displayText = text;

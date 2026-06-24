@@ -20,6 +20,8 @@ export class Agent {
   private static readonly MAX_SUBAGENTS = 5;
   private usageMap: Map<string, { promptTokens: number; completionTokens: number }> = new Map();
   private cancelledSessions: Set<string> = new Set();
+  /** Sessions currently inside _handleMessageInternal (interrupted on shutdown) */
+  private processingSessions: Set<string> = new Set();
 
   constructor(
     providers: { main: LLMProvider; fallback?: LLMProvider; guardrail?: LLMProvider },
@@ -331,6 +333,19 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     if (count > 0) {
       console.log(`📝 Saved ${count} session(s) to disk.`);
     }
+
+    // Write a .active file listing sessions that were in-progress during shutdown.
+    // On restart, only these sessions will be recovered (not completed conversations).
+    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
+    const activePath = path.join(sessionsDir, '.active');
+    const activeIds = [...this.processingSessions];
+    if (activeIds.length > 0) {
+      fs.writeFileSync(activePath, activeIds.join('\n'), 'utf-8');
+      console.log(`🔴 Marked ${activeIds.length} in-progress session(s) for recovery on restart.`);
+    } else if (fs.existsSync(activePath)) {
+      // No active sessions — remove stale .active file so recovery is skipped
+      fs.unlinkSync(activePath);
+    }
   }
 
   /** Return count of active (in-memory) sessions */
@@ -521,6 +536,20 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     message: GatewayMessage,
     onEvent: AgentEventHandler,
   ): Promise<void> {
+    // Track this session as actively processing (for shutdown recovery)
+    this.processingSessions.add(message.sessionId);
+    try {
+      await this._handleMessageBody(message, onEvent);
+    } finally {
+      this.processingSessions.delete(message.sessionId);
+    }
+  }
+
+  /** The core message handling logic (extracted for processing tracking) */
+  private async _handleMessageBody(
+    message: GatewayMessage,
+    onEvent: AgentEventHandler,
+  ): Promise<void> {
     const contentTrimmed = message.content.trim();
 
     if (contentTrimmed === '/reset') {
@@ -575,7 +604,11 @@ You MUST:
 4. Do NOT assume previous tool calls succeeded — they were interrupted and their results are lost.
 
 Continue the conversation naturally after assessing the situation.`;
-      messages.push({ role: 'system', content: restartNotice });
+      // Use unshift to place the restart notice at the BEGINNING of loaded history
+      // (right after the dynamically generated fresh system prompt in messagesForModel),
+      // so that all system messages appear before any user/assistant messages.
+      // Some providers (e.g. DeepSeek via Jinja template) enforce this ordering.
+      messages.unshift({ role: 'system', content: restartNotice });
     } else {
       // Minify user input to save tokens
       const minifiedContent = message.content.replace(/\n{3,}/g, '\n\n').trim();

@@ -243,40 +243,52 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
 
     // ─── Session Recovery (after gateways are ready) ──────────
     const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
-    if (fs.existsSync(sessionsDir)) {
-      const sessionFiles = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
-      if (sessionFiles.length > 0) {
-        console.log(`♻️  Recovering ${sessionFiles.length} session(s) from disk...`);
+    const activePath = path.join(sessionsDir, '.active');
+    let sessionIdsToRecover: string[] = [];
 
-        for (const file of sessionFiles) {
-          const sessionId = file.replace('.json', '');
-          let recovered = false;
+    if (fs.existsSync(activePath)) {
+      const raw = fs.readFileSync(activePath, 'utf-8').trim();
+      sessionIdsToRecover = raw ? raw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+      // Remove .active file after reading so subsequent restarts don't re-recover
+      fs.unlinkSync(activePath);
+    }
 
-          for (const gw of gateways) {
-            if (typeof (gw as any).createSessionEventHandler === 'function') {
-              const eventHandler = await (gw as any).createSessionEventHandler(sessionId);
-              if (eventHandler) {
-                // Notify the channel that the session is being resumed
-                eventHandler({ type: 'text', content: '♻️ **Gateway restarted** — 恢復先前的對話中...' });
+    if (sessionIdsToRecover.length > 0) {
+      console.log(`♻️  Recovering ${sessionIdsToRecover.length} in-progress session(s) from disk...`);
 
-                // Process through the agent with gateway_restarted action
-                const prefix = sessionId.split('-')[0] || 'unknown';
-                agent.handleMessage(
-                  { sessionId, userId: 'system', content: '', action: 'gateway_restarted', gateway: prefix },
-                  eventHandler,
-                ).catch((err: any) => {
-                  console.error(`[Recovery] Error processing session ${sessionId}:`, err);
-                });
+      for (const sessionId of sessionIdsToRecover) {
+        const sessionFile = path.join(sessionsDir, `${sessionId}.json`);
+        if (!fs.existsSync(sessionFile)) {
+          console.log(`  ⚠️  Session ${sessionId}: session file not found, skipping.`);
+          continue;
+        }
 
-                recovered = true;
-                break;
-              }
+        let recovered = false;
+
+        for (const gw of gateways) {
+          if (typeof (gw as any).createSessionEventHandler === 'function') {
+            const eventHandler = await (gw as any).createSessionEventHandler(sessionId);
+            if (eventHandler) {
+              // Notify the channel that the session is being resumed
+              eventHandler({ type: 'text', content: '♻️ **Gateway restarted** — 恢復先前的對話中...' });
+
+              // Process through the agent with gateway_restarted action
+              const prefix = sessionId.split('-')[0] || 'unknown';
+              agent.handleMessage(
+                { sessionId, userId: 'system', content: '', action: 'gateway_restarted', gateway: prefix },
+                eventHandler,
+              ).catch((err: any) => {
+                console.error(`[Recovery] Error processing session ${sessionId}:`, err);
+              });
+
+              recovered = true;
+              break;
             }
           }
+        }
 
-          if (!recovered) {
-            console.log(`  ⚠️  Session ${sessionId}: no matching gateway found, leaving on disk.`);
-          }
+        if (!recovered) {
+          console.log(`  ⚠️  Session ${sessionId}: no matching gateway found, leaving on disk.`);
         }
       }
     }

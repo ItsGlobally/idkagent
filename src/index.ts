@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import os from 'node:os';
 import readline from 'node:readline';
 import path from 'node:path';
 import yaml from 'yaml';
@@ -64,9 +65,16 @@ ${BOLD}Usage:${RESET}
   idkagent ${GREEN}chat${RESET}                    Start interactive CLI chat
   idkagent ${GREEN}gateway${RESET}                 Configure gateway (e.g. Discord)
   idkagent ${GREEN}gateway start${RESET}            Start all enabled gateways
+  idkagent ${GREEN}gateway install${RESET}          Install gateway as a systemd user service
+  idkagent ${GREEN}gateway stop${RESET}             Stop the gateway service
+  idkagent ${GREEN}gateway restart${RESET}          Restart the gateway service
+  idkagent ${GREEN}gateway status${RESET}           Show gateway service status
+  idkagent ${GREEN}gateway enable${RESET}           Enable gateway to auto-start on login
+  idkagent ${GREEN}gateway disable${RESET}          Disable gateway auto-start
+  idkagent ${GREEN}gateway uninstall${RESET}        Uninstall gateway service
   idkagent ${GREEN}config init${RESET}              Create default config.yml
   idkagent ${GREEN}config update${RESET}            Update config.yml with missing defaults
-  idkkagent ${GREEN}config show${RESET}              Show current configuration
+  idkagent ${GREEN}config show${RESET}              Show current configuration
   idkagent ${GREEN}help${RESET}                     Show this help message
 
 ${BOLD}Flags:${RESET}
@@ -80,7 +88,31 @@ ${BOLD}Examples:${RESET}
   ${DIM}# Start CLI chat with Gemini${RESET}
   idkagent chat --provider gemini --model gemini-2.5-flash
 
-  ${DIM}# Start all enabled gateways (e.g. Discord)${RESET}
+  ${DIM}# Install gateway as a systemd user service${RESET}
+  idkagent gateway install
+
+  ${DIM}# Start the gateway service${RESET}
+  idkagent gateway start
+
+  ${DIM}# Stop the gateway service${RESET}
+  idkagent gateway stop
+
+  ${DIM}# Enable auto-start on login${RESET}
+  idkagent gateway enable
+
+  ${DIM}# Disable auto-start${RESET}
+  idkagent gateway disable
+
+  ${DIM}# Uninstall the gateway service${RESET}
+  idkagent gateway uninstall
+
+  ${DIM}# Restart the gateway service${RESET}
+  idkagent gateway restart
+
+  ${DIM}# Show gateway service status${RESET}
+  idkagent gateway status
+
+  ${DIM}# Start all enabled gateways directly${RESET}
   idkagent gateway start
 
   ${DIM}# Initialize config file${RESET}
@@ -384,6 +416,282 @@ async function runGatewaySetup(rl: readline.Interface, config: AgentConfig): Pro
   }
 }
 
+// ─── Gateway Service Management (systemd --user) ─────────────
+
+const SERVICE_NAME = 'idkagent-gateway';
+
+function getSystemdUserDir(): string {
+  return path.resolve(os.homedir(), '.config', 'systemd', 'user');
+}
+
+function getServiceUnitPath(): string {
+  return path.resolve(getSystemdUserDir(), `${SERVICE_NAME}.service`);
+}
+
+function getResourceServiceUnitPath(): string {
+  // Resolve the project root relative to this file (src/index.ts → resources/)
+  // In production (dist/index.js), go up one level from dist/ to project root.
+  const projectRoot = path.resolve(new URL('.', import.meta.url).pathname, '..');
+  return path.resolve(projectRoot, 'resources', `${SERVICE_NAME}.service`);
+}
+
+/**
+ * Run a systemctl --user command and return { code, stdout, stderr }.
+ */
+async function systemctl(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { execSync } = await import('node:child_process');
+  try {
+    const stdout = execSync(`systemctl --user ${args.join(' ')}`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { code: 0, stdout: stdout.trim(), stderr: '' };
+  } catch (err: any) {
+    return {
+      code: err.status ?? 1,
+      stdout: (err.stdout || '').toString().trim(),
+      stderr: (err.stderr || '').toString().trim(),
+    };
+  }
+}
+
+async function gatewayServiceInstall(): Promise<void> {
+  const srcPath = getResourceServiceUnitPath();
+  const dstDir = getSystemdUserDir();
+  const dstPath = getServiceUnitPath();
+
+  // Check if resource file exists
+  if (!fs.existsSync(srcPath)) {
+    console.error(`${RED}❌ Service unit file not found at: ${srcPath}${RESET}`);
+    process.exit(1);
+  }
+
+  // Read template and replace %h with actual home directory
+  let unitContent = fs.readFileSync(srcPath, 'utf-8');
+  unitContent = unitContent.replace(/%h/g, os.homedir());
+
+  // Ensure target directory exists
+  fs.mkdirSync(dstDir, { recursive: true });
+
+  // Write the unit file
+  fs.writeFileSync(dstPath, unitContent, 'utf-8');
+  console.log(`${GREEN}✅ Service unit written to: ${dstPath}${RESET}`);
+
+  // Reload systemd user daemon
+  console.log(`${DIM}Reloading systemd user daemon...${RESET}`);
+  const reload = await systemctl(['daemon-reload']);
+  if (reload.code !== 0) {
+    console.error(`${RED}❌ Failed to reload systemd: ${reload.stderr}${RESET}`);
+    process.exit(1);
+  }
+  console.log(`${GREEN}✅ systemd user daemon reloaded${RESET}`);
+
+  // Enable the service (so it starts on login)
+  console.log(`${DIM}Enabling service...${RESET}`);
+  const enable = await systemctl(['enable', SERVICE_NAME]);
+  if (enable.code !== 0) {
+    console.error(`${RED}❌ Failed to enable service: ${enable.stderr}${RESET}`);
+    process.exit(1);
+  }
+  console.log(`${GREEN}✅ Service enabled (auto-start on login)${RESET}`);
+
+  // Start the service
+  console.log(`${DIM}Starting service...${RESET}`);
+  const start = await systemctl(['start', SERVICE_NAME]);
+  if (start.code !== 0) {
+    console.error(`${RED}❌ Failed to start service: ${start.stderr}${RESET}`);
+    console.log(`${YELLOW}⚠ Service installed but could not be started. Run 'idkagent gateway start' manually.${RESET}`);
+    process.exit(1);
+  }
+  console.log(`${GREEN}✅ Service started${RESET}`);
+
+  console.log(`\n${CYAN}${BOLD}Gateway service installed successfully!${RESET}`);
+  console.log(`  ${DIM}Status:${RESET}     ${CYAN}systemctl --user status ${SERVICE_NAME}${RESET}`);
+  console.log(`  ${DIM}Logs:${RESET}       ${CYAN}journalctl --user -u ${SERVICE_NAME} -f${RESET}`);
+}
+
+async function gatewayServiceStart(): Promise<void> {
+  // Check if unit file exists
+  if (!fs.existsSync(getServiceUnitPath())) {
+    console.error(`${RED}❌ Gateway service is not installed. Run 'idkagent gateway install' first.${RESET}`);
+    process.exit(1);
+  }
+  const result = await systemctl(['start', SERVICE_NAME]);
+  if (result.code === 0) {
+    console.log(`${GREEN}✅ Gateway service started${RESET}`);
+  } else if (result.stderr.includes('Unit is already running')) {
+    console.log(`${YELLOW}⚠ Gateway service is already running${RESET}`);
+  } else {
+    // Try to show status for more context
+    const status = await systemctl(['status', SERVICE_NAME]);
+    console.error(`${RED}❌ Failed to start gateway service:${RESET}`);
+    console.error(`  ${result.stderr}`);
+    if (status.stdout) console.error(`  ${DIM}${status.stdout.split('\n').slice(0, 3).join('\n  ')}${RESET}`);
+    process.exit(1);
+  }
+}
+
+async function gatewayServiceStop(): Promise<void> {
+  const result = await systemctl(['stop', SERVICE_NAME]);
+  if (result.code === 0) {
+    console.log(`${GREEN}✅ Gateway service stopped${RESET}`);
+  } else {
+    console.error(`${RED}❌ Failed to stop gateway service:${RESET} ${result.stderr}`);
+    process.exit(1);
+  }
+}
+
+async function gatewayServiceEnable(): Promise<void> {
+  if (!fs.existsSync(getServiceUnitPath())) {
+    console.error(`${RED}❌ Gateway service is not installed. Run 'idkagent gateway install' first.${RESET}`);
+    process.exit(1);
+  }
+  const result = await systemctl(['enable', SERVICE_NAME]);
+  if (result.code === 0) {
+    console.log(`${GREEN}✅ Gateway auto-start enabled${RESET}`);
+  } else {
+    console.error(`${RED}❌ Failed to enable gateway service:${RESET} ${result.stderr}`);
+    process.exit(1);
+  }
+}
+
+async function gatewayServiceDisable(): Promise<void> {
+  if (!fs.existsSync(getServiceUnitPath())) {
+    console.error(`${RED}❌ Gateway service is not installed. Run 'idkagent gateway install' first.${RESET}`);
+    process.exit(1);
+  }
+  const result = await systemctl(['disable', SERVICE_NAME]);
+  if (result.code === 0) {
+    console.log(`${GREEN}✅ Gateway auto-start disabled${RESET}`);
+  } else {
+    console.error(`${RED}❌ Failed to disable gateway service:${RESET} ${result.stderr}`);
+    process.exit(1);
+  }
+}
+
+async function gatewayServiceUninstall(): Promise<void> {
+  const unitPath = getServiceUnitPath();
+
+  // Stop if running
+  console.log(`${DIM}Stopping service (if running)...${RESET}`);
+  await systemctl(['stop', SERVICE_NAME]).catch(() => {});
+
+  // Disable
+  console.log(`${DIM}Disabling service...${RESET}`);
+  await systemctl(['disable', SERVICE_NAME]).catch(() => {});
+
+  // Remove unit file
+  if (fs.existsSync(unitPath)) {
+    fs.unlinkSync(unitPath);
+    console.log(`${GREEN}✅ Service unit removed: ${unitPath}${RESET}`);
+  }
+
+  // Reload daemon
+  console.log(`${DIM}Reloading systemd user daemon...${RESET}`);
+  await systemctl(['daemon-reload']);
+
+  console.log(`${GREEN}✅ Gateway service uninstalled${RESET}`);
+}
+
+async function handleGatewaySubcommand(subcommand: string | undefined, config: AgentConfig, overrides: Partial<AgentConfig>): Promise<void> {
+  switch (subcommand) {
+    case 'install':
+      await gatewayServiceInstall();
+      break;
+
+    case 'start': {
+      // When run as a systemd service (IDKAGENT_AS_SERVICE=1), run directly
+      if (process.env.IDKAGENT_AS_SERVICE === '1') {
+        await runGatewayStart(config);
+        break;
+      }
+      // Check if installed as a service → use systemctl
+      const unitPath = getServiceUnitPath();
+      if (fs.existsSync(unitPath)) {
+        // Check if systemd says the service is active
+        const status = await systemctl(['is-active', SERVICE_NAME]);
+        if (status.stdout === 'active') {
+          console.log(`${YELLOW}⚠ Gateway service is already running.${RESET}`);
+          break;
+        }
+        await gatewayServiceStart();
+      } else {
+        // Not installed as service → run directly (original behavior)
+        await runGatewayStart(config);
+      }
+      break;
+    }
+
+    case 'stop':
+      await gatewayServiceStop();
+      break;
+
+    case 'enable':
+      await gatewayServiceEnable();
+      break;
+
+    case 'disable':
+      await gatewayServiceDisable();
+      break;
+
+    case 'status': {
+      const unitPath = getServiceUnitPath();
+      if (!fs.existsSync(unitPath)) {
+        console.log(`${YELLOW}⚠ Gateway service is not installed.${RESET}`);
+        break;
+      }
+      const status = await systemctl(['status', SERVICE_NAME]);
+      console.log(status.stdout || status.stderr);
+      break;
+    }
+
+    case 'restart': {
+      if (process.env.IDKAGENT_AS_SERVICE === '1') {
+        console.log(`${YELLOW}⚠ Cannot restart from within the service. Use systemctl --user restart ${SERVICE_NAME}${RESET}`);
+        break;
+      }
+      const unitPath = getServiceUnitPath();
+      if (!fs.existsSync(unitPath)) {
+        console.error(`${RED}❌ Gateway service is not installed. Run 'idkagent gateway install' first.${RESET}`);
+        process.exit(1);
+      }
+      const result = await systemctl(['restart', SERVICE_NAME]);
+      if (result.code === 0) {
+        console.log(`${GREEN}✅ Gateway service restarted${RESET}`);
+      } else {
+        console.error(`${RED}❌ Failed to restart gateway service:${RESET} ${result.stderr}`);
+        process.exit(1);
+      }
+      break;
+    }
+
+    case 'uninstall':
+      await gatewayServiceUninstall();
+      break;
+
+    default:
+      if (subcommand) {
+        // Unknown subcommand → show error with help
+        console.error(`${RED}❌ Unknown gateway subcommand: "${subcommand}"${RESET}`);
+        console.log(`  ${DIM}Valid subcommands:${RESET} install, start, stop, restart, status, enable, disable, uninstall`);
+        console.log(`  ${DIM}Run without subcommand to configure gateway settings.${RESET}`);
+        process.exit(1);
+        break;
+      }
+      // No subcommand → interactive gateway setup wizard (original behavior)
+      const rl = createRL();
+      console.log(`\n${CYAN}${BOLD}╔══════════════════════════════════════════╗${RESET}`);
+      console.log(`${CYAN}${BOLD}║        🌐 Gateway Configuration          ║${RESET}`);
+      console.log(`${CYAN}${BOLD}╚══════════════════════════════════════════╝${RESET}`);
+      const configPath = path.resolve(getDataDir(), 'config.yml');
+      await runGatewaySetup(rl, config);
+      showSummary(config);
+      if (await promptYN(rl, `\n  Save to config.yml?`, true)) {
+        saveConfig(config, configPath);
+        console.log(`\n${GREEN}✅ Configuration saved to ${configPath}${RESET}`);
+      }
+      rl.close();
+      break;
+  }
+}
+
 // ─── Run: Full setup wizard ─────────────────────────────────
 
 async function runSetup(): Promise<void> {
@@ -535,24 +843,8 @@ async function main(): Promise<void> {
       }
 
       case 'gateway': {
-        if (subcommand === 'start') {
-          const config = loadConfig(overrides);
-          await runGatewayStart(config);
-          break;
-        }
         const config = loadConfig(overrides);
-        const rl = createRL();
-        console.log(`\n${CYAN}${BOLD}╔══════════════════════════════════════════╗${RESET}`);
-        console.log(`${CYAN}${BOLD}║        🌐 Gateway Configuration          ║${RESET}`);
-        console.log(`${CYAN}${BOLD}╚══════════════════════════════════════════╝${RESET}`);
-        const configPath = path.resolve(getDataDir(), 'config.yml');
-        await runGatewaySetup(rl, config);
-        showSummary(config);
-        if (await promptYN(rl, `\n  Save to config.yml?`, true)) {
-          saveConfig(config, configPath);
-          console.log(`\n${GREEN}✅ Configuration saved to ${configPath}${RESET}`);
-        }
-        rl.close();
+        await handleGatewaySubcommand(subcommand, config, overrides);
         break;
       }
 

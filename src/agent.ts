@@ -594,6 +594,23 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       }
     }
 
+    // Remove orphaned assistant(tool_calls) messages that have no tool results following them
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && messages[i].toolCalls) {
+        let hasFollowingTools = false;
+        for (let j = i + 1; j < messages.length; j++) {
+          if (messages[j].role === 'tool') {
+            hasFollowingTools = true;
+            break;
+          }
+          if (messages[j].role === 'user' || messages[j].role === 'system') break;
+        }
+        if (!hasFollowingTools) {
+          messages.splice(i, 1);
+        }
+      }
+    }
+
     // When tools are disabled, restrict to search/fetch only
     const toolDefs = this.config.disableTool ? this.getSafeToolDefinitions() : this.getToolDefinitions();
 
@@ -619,6 +636,23 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
             if (messages[j].role === 'user' || messages[j].role === 'system') break;
           }
           if (!hasPrecedingToolCalls) {
+            messages.splice(i, 1);
+          }
+        }
+      }
+
+      // Remove orphaned assistant(tool_calls) with no tool results following
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'assistant' && messages[i].toolCalls) {
+          let hasFollowingTools = false;
+          for (let j = i + 1; j < messages.length; j++) {
+            if (messages[j].role === 'tool') {
+              hasFollowingTools = true;
+              break;
+            }
+            if (messages[j].role === 'user' || messages[j].role === 'system') break;
+          }
+          if (!hasFollowingTools) {
             messages.splice(i, 1);
           }
         }

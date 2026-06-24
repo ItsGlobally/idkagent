@@ -110,7 +110,7 @@ export class DiscordGateway implements Gateway {
   }
 
   private async registerCommands(token: string, clientId: string): Promise<void> {
-    const commands = [
+    const ourCommands = [
       new SlashCommandBuilder()
         .setName('chat')
         .setDescription('Talk to the AI agent')
@@ -126,13 +126,39 @@ export class DiscordGateway implements Gateway {
       new SlashCommandBuilder()
         .setName('resetmemory')
         .setDescription("Delete the agent's permanent memory and reset session"),
-    ].map((command) => command.toJSON());
+    ];
+
+    const ourNames = new Set(ourCommands.map((c) => c.name));
+    const commandsJson = ourCommands.map((c) => c.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(token);
+
     try {
+      // Step 1: Fetch existing global commands
+      console.log('🔍 Fetching existing global commands...');
+      const existing: any[] = await rest.get(Routes.applicationCommands(clientId)) as any[];
+
+      // Step 2: Delete commands that don't belong to us
+      const toDelete = existing.filter((cmd) => !ourNames.has(cmd.name));
+      if (toDelete.length > 0) {
+        console.log(`🗑️  Deleting ${toDelete.length} command(s) not created by this agent...`);
+        for (const cmd of toDelete) {
+          console.log(`   - Deleting /${cmd.name} (${cmd.id})`);
+          try {
+            await rest.delete(Routes.applicationCommand(clientId, cmd.id));
+          } catch (e) {
+            console.warn(`   ⚠️  Failed to delete /${cmd.name}: ${e}`);
+          }
+        }
+        console.log(`✅ Removed ${toDelete.length} foreign command(s).`);
+      } else {
+        console.log('✅ No foreign commands to delete.');
+      }
+
+      // Step 3: Register our commands
       console.log('⏳ Registering application (/) commands...');
-      await rest.put(Routes.applicationCommands(clientId), { body: commands });
-      console.log('✅ Successfully registered application (/) commands.');
+      await rest.put(Routes.applicationCommands(clientId), { body: commandsJson });
+      console.log(`✅ ${ourCommands.length} command(s) registered successfully.`);
     } catch (error) {
       console.error('❌ Failed to register commands:', error);
     }

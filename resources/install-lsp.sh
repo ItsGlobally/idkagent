@@ -33,15 +33,17 @@ else
   JDTLS_URL="https://download.eclipse.org/jdtls/snapshots/jdt-language-server-1.54.0-202511200503.tar.gz"
   JDTLS_DIR="$HOME/jdtls"
   mkdir -p "$JDTLS_DIR" "$BIN_DIR"
-  curl -#L "$JDTLS_URL" | tar xz -C "$JDTLS_DIR" --strip-components=1
+  curl -#L "$JDTLS_URL" | tar xz -C "$JDTLS_DIR"
   echo "   ✅ Extracted to $JDTLS_DIR"
-  
+
   JDTLS_BIN="$(find "$JDTLS_DIR" -name "jdtls" -type f | head -1)"
   if [ -z "$JDTLS_BIN" ]; then
     echo "   ❌ Failed to locate jdtls binary after extraction."
+    echo "   Directory contents:"
+    find "$JDTLS_DIR" -maxdepth 3 -type f | head -20 | sed 's/^/     /'
     exit 1
   fi
-  
+
   ln -sf "$JDTLS_BIN" "$BIN_DIR/jdtls"
   chmod +x "$BIN_DIR/jdtls"
   echo "   ✅ Symlinked: $BIN_DIR/jdtls → $JDTLS_BIN"

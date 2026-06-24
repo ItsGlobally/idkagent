@@ -45,7 +45,7 @@ const KNOWN_LSPS: LspDefinition[] = [
       'fi',
       'echo "   ⏳ Downloading JDT LS..."',
       'mkdir -p "$JDTLS_DIR" "$BIN_DIR"',
-      'curl -#L "$JDTLS_URL" | tar xz -C "$JDTLS_DIR" --strip-components=1 2>&1 | sed \'s/^/   /\'',
+      'curl -#L "$JDTLS_URL" | tar xz -C "$JDTLS_DIR" 2>&1 | sed \'s/^/   /\'',
       'JDTLS_BIN="$(find "$JDTLS_DIR" -name "jdtls" -type f | head -1)"',
       'if [ -z "$JDTLS_BIN" ]; then',
       '  echo "   ❌ Failed to locate jdtls binary after extraction."',
@@ -134,7 +134,7 @@ export function installLsp(lsp: LspDefinition): { success: boolean; output: stri
       });
 
       console.log(`   ⏳ Extracting...`);
-      execSync(`tar xzf "${tarball}" -C "${jdtlsDir}" --strip-components=1`, {
+      execSync(`tar xzf "${tarball}" -C "${jdtlsDir}"`, {
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 60_000,
@@ -275,7 +275,7 @@ export function getInstallScriptContent(): string {
         parts.push(`  JDTLS_URL="${lsp.url}"`);
         parts.push(`  JDTLS_DIR="\$HOME/jdtls"`);
         parts.push(`  mkdir -p "\$JDTLS_DIR" "\$BIN_DIR"`);
-        parts.push(`  curl -#L "\$JDTLS_URL" | tar xz -C "\$JDTLS_DIR" --strip-components=1`);
+        parts.push(`  curl -#L "\$JDTLS_URL" | tar xz -C "\$JDTLS_DIR"`);
         parts.push(`  echo "   ✅ Extracted to \$JDTLS_DIR"`);
         parts.push(`  JDTLS_BIN="\$(find "\$JDTLS_DIR" -name "jdtls" -type f | head -1)"`);
         parts.push(`  if [ -z "\$JDTLS_BIN" ]; then`);

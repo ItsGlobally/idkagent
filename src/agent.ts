@@ -540,8 +540,10 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       return;
     }
 
-    // Snapshot usage at the start — used to compute per-message token total
-    const usageBefore = this.usageMap.get(message.sessionId) || { promptTokens: 0, completionTokens: 0 };
+    // Snapshot usage at the start — used to compute per-message token total.
+    // Use spread to take a copy so usageBefore is never mutated by reference.
+    const _usageBefore = this.usageMap.get(message.sessionId);
+    const usageBefore = _usageBefore ? { ..._usageBefore } : { promptTokens: 0, completionTokens: 0 };
 
     const messages = this.getSession(message.sessionId);
 
@@ -751,16 +753,18 @@ Continue the conversation naturally after assessing the situation.`;
         if (this.config.disableTool) {
           const hasUnsafe = response.toolCalls.some(tc => tc.name !== 'search' && tc.name !== 'fetch');
           if (hasUnsafe) {
-            let text = response.content || '[Tool calls are disabled in pure chat mode.]';
+            const text = response.content || '[Tool calls are disabled in pure chat mode.]';
+            // Append token line to displayed message only, don't save to history
             const usage = this.usageMap.get(message.sessionId);
+            let displayText = text;
             if (usage) {
               const deltaPrompt = usage.promptTokens - usageBefore.promptTokens;
               const deltaCompletion = usage.completionTokens - usageBefore.completionTokens;
               if (deltaPrompt > 0 || deltaCompletion > 0) {
-                text += `\n-# ${this.config.models.main.model} · ↑${deltaPrompt.toLocaleString()} · ↓${deltaCompletion.toLocaleString()}`;
+                displayText += `\n-# ${this.config.models.main.model} · ↑${deltaPrompt.toLocaleString()} · ↓${deltaCompletion.toLocaleString()}`;
               }
             }
-            onEvent({ type: 'text', content: text });
+            onEvent({ type: 'text', content: displayText });
             messages.push({ role: 'assistant', content: text });
             this.sessions.set(message.sessionId, messages);
             this.saveSession(message.sessionId);
@@ -841,18 +845,21 @@ Continue the conversation naturally after assessing the situation.`;
       }
 
       // No tool calls — this is the final text response
-      let text = response.content || '';
-      // Append per-turn token usage delta (not cumulative)
+
+      // Build display text with token line (appended to onEvent only, not persisted to history)
+      const text = response.content || '';
       const usage = this.usageMap.get(message.sessionId);
+      let displayText = text;
       if (usage) {
         const deltaPrompt = usage.promptTokens - usageBefore.promptTokens;
         const deltaCompletion = usage.completionTokens - usageBefore.completionTokens;
         if (deltaPrompt > 0 || deltaCompletion > 0) {
-          text += `\n-# ${this.config.models.main.model} · ↑${deltaPrompt.toLocaleString()} · ↓${deltaCompletion.toLocaleString()}`;
+          displayText += `\n-# ${this.config.models.main.model} · ↑${deltaPrompt.toLocaleString()} · ↓${deltaCompletion.toLocaleString()}`;
         }
       }
-      onEvent({ type: 'text', content: text });
+      onEvent({ type: 'text', content: displayText });
 
+      // Persist only the clean response (without token line) to session history
       messages.push({ role: 'assistant', content: text });
       this.sessions.set(message.sessionId, messages);
       this.saveSession(message.sessionId);

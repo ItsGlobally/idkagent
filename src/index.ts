@@ -72,6 +72,11 @@ ${BOLD}Usage:${RESET}
   idkagent ${GREEN}gateway enable${RESET}           Enable gateway to auto-start on login
   idkagent ${GREEN}gateway disable${RESET}          Disable gateway auto-start
   idkagent ${GREEN}gateway uninstall${RESET}        Uninstall gateway service
+  idkagent ${GREEN}lsp list${RESET}                 List LSP servers and their status
+  idkagent ${GREEN}lsp enable${RESET} <name>        Enable an LSP server
+  idkagent ${GREEN}lsp disable${RESET} <name>       Disable an LSP server
+  idkagent ${GREEN}lsp install${RESET} <name>       Install an LSP server
+  idkagent ${GREEN}lsp uninstall${RESET} <name>     Uninstall an LSP server
   idkagent ${GREEN}config init${RESET}              Create default config.yml
   idkagent ${GREEN}config update${RESET}            Update config.yml with missing defaults
   idkagent ${GREEN}config show${RESET}              Show current configuration
@@ -114,6 +119,18 @@ ${BOLD}Examples:${RESET}
 
   ${DIM}# Start all enabled gateways directly${RESET}
   idkagent gateway start
+
+  ${DIM}# Enable TypeScript LSP${RESET}
+  idkagent lsp enable typescript
+
+  ${DIM}# Disable Java LSP${RESET}
+  idkagent lsp disable java
+
+  ${DIM}# Install TypeScript LSP (npm install -g typescript)${RESET}
+  idkagent lsp install typescript
+
+  ${DIM}# List all LSPs and their status${RESET}
+  idkagent lsp list
 
   ${DIM}# Initialize config file${RESET}
   idkagent config init
@@ -468,6 +485,155 @@ async function runGatewaySetup(rl: readline.Interface, config: AgentConfig): Pro
     if (await promptYN(rl, '  Add another provider for the gateway?', false)) {
       await setupOneProvider(rl, config);
     }
+  }
+}
+
+// ─── LSP Management ───────────────────────────────────────────
+
+interface LspSubcommands {
+  list: void;
+  enable: string;
+  disable: string;
+  install: string;
+  uninstall: string;
+}
+
+const LSP_HELP = `
+${BOLD}LSP Management:${RESET}
+  idkagent ${GREEN}lsp list${RESET}                  List available LSP servers and their status
+  idkagent ${GREEN}lsp enable <name>${RESET}         Enable an LSP server in config
+  idkagent ${GREEN}lsp disable <name>${RESET}         Disable an LSP server in config
+  idkagent ${GREEN}lsp install <name>${RESET}         Install an LSP server
+  idkagent ${GREEN}lsp uninstall <name>${RESET}       Uninstall an LSP server
+`;
+
+async function handleLspSubcommand(subcommand: string | undefined, extraArgs: string[], config: AgentConfig): Promise<void> {
+  const { getKnownLsps, getLspByName, isLspInstalled, isLspEnabled, setLspEnabled, installLsp, uninstallLsp, getInstallScriptContent } = await import('./lsp_manager.js');
+
+  const lsps = getKnownLsps();
+
+  if (!subcommand || subcommand === 'list') {
+    // ── List all LSPs ─────────────────────────────────────
+    console.log(`\n${CYAN}${BOLD}╔══════════════════════════════════════════╗${RESET}`);
+    console.log(`${CYAN}${BOLD}║        🔧 LSP Server Status              ║${RESET}`);
+    console.log(`${CYAN}${BOLD}╚══════════════════════════════════════════╝${RESET}`);
+    for (const lsp of lsps) {
+      const installed = isLspInstalled(lsp);
+      const enabled = isLspEnabled(config, lsp.name);
+      const binCheck = installed ? `${GREEN}installed${RESET}` : `${RED}not found${RESET}`;
+      const enabledCheck = enabled ? `${GREEN}enabled${RESET}` : `${YELLOW}disabled${RESET}`;
+      console.log(`\n  ${BOLD}${lsp.displayName}${RESET}`);
+      console.log(`    ${DIM}Description:${RESET} ${lsp.description}`);
+      console.log(`    ${DIM}Binary:${RESET}      ${lsp.bin}`);
+      console.log(`    ${DIM}Installed:${RESET}   ${binCheck}`);
+      console.log(`    ${DIM}Enabled:${RESET}     ${enabledCheck}`);
+      console.log(`    ${DIM}More info:${RESET}   ${lsp.url}`);
+    }
+    console.log(`\n  ${DIM}Use 'idkagent lsp enable <name>' or 'idkagent lsp disable <name>' to toggle.${RESET}`);
+    console.log(`  ${DIM}Use 'idkagent lsp install <name>' to install.${RESET}\n`);
+    return;
+  }
+
+  // ── Validate subcommand is known ──────────────────────────
+  const VALID_LSP_SUBS = ['enable', 'disable', 'install', 'uninstall'];
+  if (!VALID_LSP_SUBS.includes(subcommand)) {
+    console.error(`${RED}❌ Unknown lsp subcommand: "${subcommand}"${RESET}`);
+    console.log(`  ${DIM}Valid subcommands:${RESET} list, ${VALID_LSP_SUBS.join(', ')}`);
+    process.exit(1);
+  }
+
+  // ── Subcommands that require a name argument ────────────
+  const nameArg = extraArgs[0];
+  if (!nameArg) {
+    console.error(`${RED}❌ Missing LSP name. Usage: idkagent lsp ${subcommand} <name>${RESET}`);
+    console.log(`  ${DIM}Available LSPs: ${lsps.map(l => l.name).join(', ')}${RESET}`);
+    process.exit(1);
+  }
+
+  const lsp = getLspByName(nameArg);
+  if (!lsp) {
+    console.error(`${RED}❌ Unknown LSP: "${nameArg}"${RESET}`);
+    console.log(`  ${DIM}Available LSPs: ${lsps.map(l => l.name).join(', ')}${RESET}`);
+    process.exit(1);
+  }
+
+  switch (subcommand) {
+    case 'enable': {
+      setLspEnabled(config, lsp.name, true);
+      // Save config
+      const configPath = path.resolve(getDataDir(), 'config.yml');
+      saveConfig(config, configPath);
+      console.log(`${GREEN}✅ ${lsp.displayName} enabled.${RESET}`);
+      console.log(`  ${DIM}Restart the gateway for changes to take effect.${RESET}`);
+      break;
+    }
+
+    case 'disable': {
+      setLspEnabled(config, lsp.name, false);
+      const configPath = path.resolve(getDataDir(), 'config.yml');
+      saveConfig(config, configPath);
+      console.log(`${GREEN}✅ ${lsp.displayName} disabled.${RESET}`);
+      console.log(`  ${DIM}Restart the gateway for changes to take effect.${RESET}`);
+      break;
+    }
+
+    case 'install': {
+      const installed = isLspInstalled(lsp);
+      if (installed) {
+        console.log(`${YELLOW}⚠  ${lsp.displayName} is already installed.${RESET}`);
+        // Still enable it in config
+        setLspEnabled(config, lsp.name, true);
+        const configPath = path.resolve(getDataDir(), 'config.yml');
+        saveConfig(config, configPath);
+        console.log(`  ${GREEN}Enabled in config.${RESET}`);
+        break;
+      }
+
+      console.log(`⏳ Installing ${lsp.displayName}...`);
+      const result = installLsp(lsp);
+      if (result.success) {
+        console.log(`${GREEN}✅ ${lsp.displayName} installed.${RESET}`);
+        if (result.output) console.log(`  ${result.output}`);
+        setLspEnabled(config, lsp.name, true);
+        const configPath = path.resolve(getDataDir(), 'config.yml');
+        saveConfig(config, configPath);
+        console.log(`  ${GREEN}Enabled in config.${RESET}`);
+      } else {
+        console.error(`${RED}❌ Installation failed:${RESET}`);
+        console.error(`  ${result.output}`);
+        process.exit(1);
+      }
+      break;
+    }
+
+    case 'uninstall': {
+      const installed = isLspInstalled(lsp);
+      if (!installed) {
+        console.log(`${YELLOW}⚠  ${lsp.displayName} is not installed.${RESET}`);
+        setLspEnabled(config, lsp.name, false);
+        const configPath = path.resolve(getDataDir(), 'config.yml');
+        saveConfig(config, configPath);
+        console.log(`  ${GREEN}Disabled in config.${RESET}`);
+        break;
+      }
+
+      console.log(`⏳ Uninstalling ${lsp.displayName}...`);
+      const result = uninstallLsp(lsp);
+      if (result.success) {
+        console.log(`${GREEN}✅ ${lsp.displayName} uninstalled.${RESET}`);
+        if (result.output) console.log(`  ${result.output}`);
+        setLspEnabled(config, lsp.name, false);
+        const configPath = path.resolve(getDataDir(), 'config.yml');
+        saveConfig(config, configPath);
+        console.log(`  ${GREEN}Disabled in config.${RESET}`);
+      } else {
+        console.error(`${RED}❌ Uninstallation failed:${RESET}`);
+        console.error(`  ${result.output}`);
+        process.exit(1);
+      }
+      break;
+    }
+
   }
 }
 
@@ -900,6 +1066,16 @@ async function main(): Promise<void> {
       case 'gateway': {
         const config = loadConfig(overrides);
         await handleGatewaySubcommand(subcommand, config, overrides);
+        break;
+      }
+
+      case 'lsp': {
+        const config = loadConfig(overrides);
+        // Extract args: node index.js lsp <subcommand> [name] ...
+        const allArgs = process.argv.slice(3).filter(a => !a.startsWith('--'));
+        const lspSub = allArgs[0];
+        const extraArgs = allArgs.slice(1);
+        await handleLspSubcommand(lspSub, extraArgs, config);
         break;
       }
 

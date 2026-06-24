@@ -864,13 +864,20 @@ export class DiscordGateway implements Gateway {
     }
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
+    // 1. Prevent new sends from being enqueued
     this.destroyed = true;
-    // Clear pending send chains so they don't try to use the destroyed client
+
+    // 2. Wait for all pending send chains to flush (tool calls, thinking, text chunks, etc.)
+    const pendingSends = Array.from(this.sendChains.values());
+    if (pendingSends.length > 0) {
+      console.log(`📤 Waiting for ${pendingSends.length} pending Discord message(s) to be sent...`);
+      await Promise.allSettled(pendingSends);
+      console.log(`✅ All pending Discord messages flushed.`);
+    }
+
+    // 3. Now safe to clear and destroy
     this.sendChains.clear();
-    return new Promise((resolve) => {
-      const dispose = this.client.destroy();
-      dispose.then(resolve).catch(resolve);
-    });
+    await this.client.destroy();
   }
 }

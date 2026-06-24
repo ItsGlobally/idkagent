@@ -558,8 +558,21 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
       return;
     } else if (message.action === 'gateway_restarted') {
-      // Inject a system message about gateway restart so the model knows what happened
-      const restartNotice = `[System Notice]: The gateway service was restarted at ${new Date().toISOString()}. Continue the conversation naturally. If you were in the middle of an operation, you may need to re-perform it or inform the user about the restart.`;
+      // Inject an explicit system message so the model unmistakably knows the gateway restarted.
+      // System role is used so it is not persisted to disk (filtered by saveSession),
+      // preventing accumulation across multiple restarts.
+      const restartNotice = `⚠️ GATEWAY RESTART NOTIFICATION — READ CAREFULLY
+The gateway (${message.gateway || 'unknown'}) was restarted at ${new Date().toISOString()}. Your previous conversation has been recovered from persistent storage.
+
+⚠️ Any in-progress tool operations, file edits, command executions, or multi-step tasks were INTERRUPTED and did NOT complete.
+
+You MUST:
+1. Assess what you were doing before the restart (review the conversation history above).
+2. If you were in the middle of a multi-step operation, re-perform any steps that were lost.
+3. Inform the user about the restart and whether any actions need their attention.
+4. Do NOT assume previous tool calls succeeded — they were interrupted and their results are lost.
+
+Continue the conversation naturally after assessing the situation.`;
       messages.push({ role: 'system', content: restartNotice });
     } else {
       // Minify user input to save tokens

@@ -24,7 +24,10 @@ import { createSearchTool } from './search.js';
 import { attachDownloadTool } from './attach_download.js';
 import { imageAnalyzeTool } from './image_analyze.js';
 
-export function getAllTools(searchOptions?: { apiKey: string; model: string }): Tool[] {
+export function getAllTools(
+  searchOptions?: { apiKey: string; model: string },
+  imageOptions?: { apiKey: string; model: string },
+): Tool[] {
   const tools: Tool[] = [
     readFileTool,
     createFileTool,
@@ -54,9 +57,9 @@ export function getAllTools(searchOptions?: { apiKey: string; model: string }): 
   // Always add attachment download tool
   tools.push(attachDownloadTool);
 
-  // Add image analysis tool if search (Gemini) provider has an API key
-  if (searchOptions?.apiKey) {
-    tools.push(imageAnalyzeTool(searchOptions));
+  // Add image analysis tool if image provider has API key
+  if (imageOptions?.apiKey) {
+    tools.push(imageAnalyzeTool(imageOptions));
   }
 
   return tools;

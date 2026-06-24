@@ -43,6 +43,12 @@ export interface SearchConfig {
   model: string;
 }
 
+export interface ImageConfig {
+  enabled: boolean;
+  provider: string; // must reference a gemini-type provider
+  model: string;
+}
+
 export interface ProviderConfig {
   type: 'openai-compatible' | 'gemini';
   apiKey: string;
@@ -80,6 +86,7 @@ export interface AgentConfig {
   logging: LoggingConfig;
   lsp: LspConfig;
   search: SearchConfig;
+  image: ImageConfig;
   /** When true, all tool calls are disabled — agent becomes a pure chat bot */
   disableTool: boolean;
 }
@@ -155,6 +162,11 @@ const DEFAULT_CONFIG: AgentConfig = {
     },
   },
   search: {
+    enabled: false,
+    provider: 'gemini',
+    model: 'gemini-2.5-flash-lite',
+  },
+  image: {
     enabled: false,
     provider: 'gemini',
     model: 'gemini-2.5-flash-lite',
@@ -355,6 +367,7 @@ export function saveConfig(config: AgentConfig): void {
     logging: config.logging,
     lsp: config.lsp,
     search: config.search,
+    image: config.image,
   };
   if (config.disableTool) cleaned.disableTool = true;
   fs.writeFileSync(configPath, yaml.stringify(cleaned), 'utf-8');

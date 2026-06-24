@@ -152,12 +152,19 @@ async function runChat(config: AgentConfig): Promise<void> {
     temperature: 1,
   }) : undefined;
 
-  const tools = getAllTools(getSearchOptions(config));
+  const tools = getAllTools(getSearchOptions(config), getImageOptions(config));
   const agent = new Agent({ main: mainProvider, fallback: fallbackProvider, guardrail: guardrailProvider }, tools, config);
   const gateway = new CLIGateway(config.logging);
 
   // No queue needed for CLI (single user, synchronous)
   await gateway.start((message, onEvent) => agent.handleMessage(message, onEvent));
+}
+
+function getImageOptions(config: AgentConfig): { apiKey: string; model: string } | undefined {
+  if (!config.image?.enabled) return undefined;
+  const provConfig = config.providers[config.image.provider];
+  if (!provConfig || provConfig.type !== 'gemini') return undefined;
+  return { apiKey: provConfig.apiKey, model: config.image.model };
 }
 
 async function runGatewayStart(config: AgentConfig): Promise<void> {
@@ -186,7 +193,7 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
     temperature: 1,
   }) : undefined;
 
-  const tools = getAllTools(getSearchOptions(config));
+  const tools = getAllTools(getSearchOptions(config), getImageOptions(config));
   const agent = new Agent({ main: mainProvider, fallback: fallbackProvider, guardrail: guardrailProvider }, tools, config);
   const queue = new MessageQueue(config.queue);
 
@@ -513,6 +520,7 @@ function saveConfig(config: AgentConfig, configPath: string): void {
     logging: config.logging,
     lsp: config.lsp,
     search: config.search,
+    image: config.image,
   };
   fs.writeFileSync(configPath, yaml.stringify(cleaned), 'utf-8');
 }

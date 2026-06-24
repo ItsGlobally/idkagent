@@ -143,6 +143,14 @@ async function runChat(config: AgentConfig): Promise<void> {
   await gateway.start((message, onEvent) => agent.handleMessage(message, onEvent));
 }
 
+function countSessionFiles(): number {
+  try {
+    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
+    if (!fs.existsSync(sessionsDir)) return 0;
+    return fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json')).length;
+  } catch { return 0; }
+}
+
 async function runGatewayStart(config: AgentConfig): Promise<void> {
   const platforms = Object.entries(config.gateways || {})
     .filter(([, v]) => v)
@@ -173,16 +181,63 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
   const agent = new Agent({ main: mainProvider, fallback: fallbackProvider, guardrail: guardrailProvider }, tools, config);
   const queue = new MessageQueue(config.queue);
 
+  // Count recovered sessions from disk
+  const recoveredSessions = countSessionFiles();
+  if (recoveredSessions > 0) {
+    console.log(`♻️  ${recoveredSessions} session(s) recovered from disk. Conversations will resume on next user message.`);
+  }
+
   console.log(`${CYAN}Starting gateway(s): ${platforms.join(', ')}...${RESET}`);
   console.log(`${CYAN}Initializing LSP servers...${RESET}`);
   await initJdtlsIfNeeded();
 
-  // Start all enabled gateways concurrently, each with the shared queue
-  await Promise.all(gateways.map((gw) =>
-    gw.start((message, onEvent) =>
-      queue.enqueue(message, (msg, ev) => agent.handleMessage(msg, ev), onEvent),
-    ),
-  ));
+  // ─── Graceful Shutdown ──────────────────────────────────
+  let shuttingDown = false;
+
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n${YELLOW}⚠️  Received ${signal}. Saving sessions and shutting down gracefully...${RESET}`);
+
+    // 1. Save all sessions to disk
+    agent.saveAllSessions();
+
+    // 2. Stop all gateways
+    await Promise.all(gateways.map(gw => gw.stop().catch(err => {
+      console.error(`Error stopping gateway: ${err}`);
+    })));
+
+    console.log(`${GREEN}✅ Graceful shutdown complete.${RESET}`);
+
+    // 3. If running inside systemd, let systemd handle the exit; otherwise exit ourselves
+    if (process.env.IDKAGENT_AS_SERVICE !== '1') {
+      process.exit(0);
+    }
+    // For systemd: just let the main Promise resolve naturally so the process exits cleanly
+  };
+
+  // Only register signal handlers if not in a child process / test env
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  try {
+    // Start all enabled gateways concurrently, each with the shared queue
+    await Promise.all(gateways.map((gw) =>
+      gw.start((message, onEvent) =>
+        queue.enqueue(message, (msg, ev) => agent.handleMessage(msg, ev), onEvent),
+      ),
+    ));
+  } catch (err) {
+    // If a gateway fails to start / crashes, still try to save sessions
+    console.error(`${RED}❌ Gateway error:${RESET} ${err instanceof Error ? err.message : err}`);
+    agent.saveAllSessions();
+    throw err;
+  } finally {
+    // When gateways stop (e.g. Discord disconnects), ensure sessions are saved
+    if (!shuttingDown) {
+      agent.saveAllSessions();
+    }
+  }
 }
 
 // ─── Interactive Setup Wizard ───────────────────────────────

@@ -207,7 +207,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   }
 
   /** Save a session to disk asynchronously */
-  private saveSession(sessionId: string): void {
+  private saveSession(sessionId: string, sync = false): void {
     if (this.isEphemeral) return;
 
     const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
@@ -234,11 +234,35 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
           if (msg.toolCallId !== undefined) safeMsg.toolCallId = msg.toolCallId;
           return safeMsg;
         });
-      // Fire-and-forget async write
-      fs.promises.writeFile(sessionFile, JSON.stringify(safeMessages, null, 2)).catch(err => {
-        console.error(`[Session] Failed to save session ${sessionId}:`, err);
-      });
+      const json = JSON.stringify(safeMessages, null, 2);
+      if (sync) {
+        // Synchronous write for shutdown — guaranteed to flush
+        fs.writeFileSync(sessionFile, json, 'utf-8');
+      } else {
+        // Fire-and-forget async write for normal operation
+        fs.promises.writeFile(sessionFile, json).catch(err => {
+          console.error(`[Session] Failed to save session ${sessionId}:`, err);
+        });
+      }
     }
+  }
+
+  /** Save all in-memory sessions to disk synchronously. Call before shutdown. */
+  saveAllSessions(): void {
+    if (this.isEphemeral) return;
+    let count = 0;
+    for (const sessionId of this.sessions.keys()) {
+      this.saveSession(sessionId, true);
+      count++;
+    }
+    if (count > 0) {
+      console.log(`📝 Saved ${count} session(s) to disk.`);
+    }
+  }
+
+  /** Return count of active (in-memory) sessions */
+  get activeSessionCount(): number {
+    return this.sessions.size;
   }
 
   /** Compress context to stay within token limits using an LLM summary if available */

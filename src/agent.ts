@@ -457,6 +457,9 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       return;
     }
 
+    // Snapshot usage at the start so we can compute per-turn delta
+    const usageBefore = this.usageMap.get(message.sessionId) || { promptTokens: 0, completionTokens: 0 };
+
     const messages = this.getSession(message.sessionId);
 
     if (message.action === 'retry_restart') {
@@ -598,8 +601,12 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
           if (hasUnsafe) {
             let text = response.content || '[Tool calls are disabled in pure chat mode.]';
             const usage = this.usageMap.get(message.sessionId);
-            if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
-              text += `\n-# ${this.config.models.main.model} · ↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()}`;
+            if (usage) {
+              const deltaPrompt = usage.promptTokens - usageBefore.promptTokens;
+              const deltaCompletion = usage.completionTokens - usageBefore.completionTokens;
+              if (deltaPrompt > 0 || deltaCompletion > 0) {
+                text += `\n-# ${this.config.models.main.model} · ↑${deltaPrompt.toLocaleString()} · ↓${deltaCompletion.toLocaleString()}`;
+              }
             }
             onEvent({ type: 'text', content: text });
             messages.push({ role: 'assistant', content: text });
@@ -683,10 +690,14 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
 
       // No tool calls — this is the final text response
       let text = response.content || '';
-      // Append token usage info
+      // Append per-turn token usage delta (not cumulative)
       const usage = this.usageMap.get(message.sessionId);
-      if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
-        text += `\n-# ${this.config.models.main.model} · ↑${usage.promptTokens.toLocaleString()} · ↓${usage.completionTokens.toLocaleString()}`;
+      if (usage) {
+        const deltaPrompt = usage.promptTokens - usageBefore.promptTokens;
+        const deltaCompletion = usage.completionTokens - usageBefore.completionTokens;
+        if (deltaPrompt > 0 || deltaCompletion > 0) {
+          text += `\n-# ${this.config.models.main.model} · ↑${deltaPrompt.toLocaleString()} · ↓${deltaCompletion.toLocaleString()}`;
+        }
       }
       onEvent({ type: 'text', content: text });
 

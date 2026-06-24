@@ -334,16 +334,30 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       console.log(`📝 Saved ${count} session(s) to disk.`);
     }
 
-    // Write a .active file listing sessions that were in-progress during shutdown.
-    // On restart, only these sessions will be recovered (not completed conversations).
+    // After saving, check which sessions have incomplete tool operations.
+    // Only those need recovery on restart (conversations ended normally are skipped).
+    // This approach checks actual session state rather than relying on
+    // runtime tracking sets that can have race conditions.
     const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
     const activePath = path.join(sessionsDir, '.active');
-    const activeIds = [...this.processingSessions];
+    const activeIds: string[] = [];
+
+    for (const [sessionId, messages] of this.sessions.entries()) {
+      if (messages.length === 0) continue;
+      const last = messages[messages.length - 1];
+      // Incomplete tool chain: last message is a tool result (waiting for LLM)
+      // or an assistant with tool calls (tools weren't executed yet)
+      if (last.role === 'tool' ||
+          (last.role === 'assistant' && last.toolCalls && last.toolCalls.length > 0)) {
+        activeIds.push(sessionId);
+      }
+    }
+
     if (activeIds.length > 0) {
       fs.writeFileSync(activePath, activeIds.join('\n'), 'utf-8');
-      console.log(`🔴 Marked ${activeIds.length} in-progress session(s) for recovery on restart.`);
+      console.log(`🔴 Marked ${activeIds.length} session(s) with incomplete tool operations for recovery.`);
     } else if (fs.existsSync(activePath)) {
-      // No active sessions — remove stale .active file so recovery is skipped
+      // No incomplete sessions — remove stale .active file so recovery is skipped
       fs.unlinkSync(activePath);
     }
   }
@@ -576,6 +590,12 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
 
     const messages = this.getSession(message.sessionId);
 
+    // Local variable to hold a gateway-restart notice if applicable.
+    // Instead of injecting a separate system message into history (which
+    // can confuse providers whose Jinja templates enforce strict ordering),
+    // the notice will be prepended to the fresh system prompt at call time.
+    let pendingRestartNotice: string | undefined;
+
     if (message.action === 'retry_restart') {
       // Remove all assistant/tool messages back to the last user prompt
       while (messages.length > 0 && messages[messages.length - 1].role !== 'user' && messages[messages.length - 1].role !== 'system') {
@@ -589,10 +609,14 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
       return;
     } else if (message.action === 'gateway_restarted') {
-      // Inject an explicit system message so the model unmistakably knows the gateway restarted.
-      // System role is used so it is not persisted to disk (filtered by saveSession),
+      // Store the restart notice in a local variable instead of unshifting a
+      // separate system message into history. It will be prepended to the fresh
+      // system prompt at call time, resulting in a SINGLE system message at the
+      // very beginning. This avoids issues with providers whose Jinja templates
+      // enforce strict system-message-first ordering (e.g. DeepSeek).
+      // Because it's never pushed into `messages`, it is never persisted to disk,
       // preventing accumulation across multiple restarts.
-      const restartNotice = `⚠️ GATEWAY RESTART NOTIFICATION — READ CAREFULLY
+      pendingRestartNotice = `⚠️ GATEWAY RESTART NOTIFICATION — READ CAREFULLY
 The gateway (${message.gateway || 'unknown'}) was restarted at ${new Date().toISOString()}. Your previous conversation has been recovered from persistent storage.
 
 ⚠️ Any in-progress tool operations, file edits, command executions, or multi-step tasks were INTERRUPTED and did NOT complete.
@@ -604,11 +628,6 @@ You MUST:
 4. Do NOT assume previous tool calls succeeded — they were interrupted and their results are lost.
 
 Continue the conversation naturally after assessing the situation.`;
-      // Use unshift to place the restart notice at the BEGINNING of loaded history
-      // (right after the dynamically generated fresh system prompt in messagesForModel),
-      // so that all system messages appear before any user/assistant messages.
-      // Some providers (e.g. DeepSeek via Jinja template) enforce this ordering.
-      messages.unshift({ role: 'system', content: restartNotice });
     } else {
       // Minify user input to save tokens
       const minifiedContent = message.content.replace(/\n{3,}/g, '\n\n').trim();
@@ -734,7 +753,13 @@ Continue the conversation naturally after assessing the situation.`;
           }
         }
       }
-      const freshSystemPrompt: Message = { role: 'system', content: systemPromptContent };
+      // If this is a gateway-restart recovery, prepend the restart notice to the
+      // system prompt so it appears as part of the FIRST (and only) system message,
+      // rather than injecting a separate system message into the message history.
+      const freshSystemContent = pendingRestartNotice
+        ? pendingRestartNotice + '\n\n---\n\n' + systemPromptContent
+        : systemPromptContent;
+      const freshSystemPrompt: Message = { role: 'system', content: freshSystemContent };
       const messagesForModel: Message[] = [freshSystemPrompt, ...messages];
 
       let response;

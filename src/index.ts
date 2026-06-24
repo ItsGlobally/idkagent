@@ -263,6 +263,27 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
           continue;
         }
 
+        // ── Validate: only recover sessions with incomplete operations ──────
+        // If the last message is a clean assistant text response (no tool calls),
+        // the conversation completed normally and doesn't need recovery.
+        try {
+          const raw = fs.readFileSync(sessionFile, 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const lastMsg = parsed[parsed.length - 1];
+            const isComplete =
+              lastMsg.role === 'assistant' &&
+              (!lastMsg.toolCalls || lastMsg.toolCalls.length === 0);
+            if (isComplete) {
+              console.log(`  ⏭️  Session ${sessionId}: conversation completed normally, skipping recovery.`);
+              continue;
+            }
+          }
+        } catch (e) {
+          console.log(`  ⚠️  Session ${sessionId}: unable to read session file, skipping.`);
+          continue;
+        }
+
         let recovered = false;
 
         for (const gw of gateways) {

@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import fs from 'node:fs';
 import type { Tool } from './types.js';
 
 export interface ImageAnalyzeToolOptions {
@@ -8,15 +9,24 @@ export interface ImageAnalyzeToolOptions {
 
 /**
  * Analyze an image using Gemini's vision capabilities.
- * Downloads the image from the provided URL and sends it to Gemini for analysis.
+ * Supports two modes:
+ * - URL: Downloads from a URL and sends to Gemini
+ * - Local file path: Reads the local file (useful after download_attachment)
  */
 export const imageAnalyzeTool = (options: ImageAnalyzeToolOptions): Tool => {
   const ai = new GoogleGenAI({ apiKey: options.apiKey });
   const model = options.model;
 
+  // MIME type mapping from file extension
+  const mimeMap: Record<string, string> = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+    gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    svg: 'image/svg+xml', tiff: 'image/tiff', ico: 'image/x-icon',
+  };
+
   return {
     name: 'analyze_image',
-    description: 'Analyze an image using Gemini\'s vision capabilities. Downloads the image from a URL and sends it to Gemini for analysis. Returns a detailed description, text extraction (OCR), and visual analysis of the image.',
+    description: 'Analyze an image using Gemini\'s vision capabilities. Accepts either a URL to download from, or a local file path (e.g. after using download_attachment). Returns detailed description, text extraction (OCR), and visual analysis.',
     parameters: {
       type: 'object',
       properties: {
@@ -24,33 +34,50 @@ export const imageAnalyzeTool = (options: ImageAnalyzeToolOptions): Tool => {
           type: 'string',
           description: 'URL of the image to analyze',
         },
+        filePath: {
+          type: 'string',
+          description: 'Local file path of the image (useful after downloading attachment)',
+        },
         prompt: {
           type: 'string',
           description: 'A prompt describing what to analyze or extract from the image. If not provided, Gemini will generate a general description.',
         },
       },
-      required: ['url'],
+      required: ['url', 'filePath'],
     },
 
     async execute(args: Record<string, unknown>, _context: any): Promise<string> {
-      const url = args.url as string;
+      let url = args.url as string;
+      const filePath = args.filePath as string;
       const prompt = (args.prompt as string) || 'Describe this image in detail.';
 
-      if (!url) {
-        throw new Error('Image URL is required for analyze_image.');
+      // Validate that at least one input is provided
+      if (!url && !filePath) {
+        throw new Error('Either url or filePath is required for analyze_image.');
       }
 
-      // Download the image
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`Failed to fetch image: HTTP ${res.status}`);
+      let buffer: Buffer;
+      let contentType: string;
+
+      if (filePath) {
+        // Read from local file
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`File not found: ${filePath}`);
+        }
+        buffer = fs.readFileSync(filePath);
+        // Determine MIME type from file extension
+        const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
+        contentType = mimeMap[ext] || 'image/png';
+      } else {
+        // Download from URL
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`Failed to fetch image: HTTP ${res.status}`);
+        }
+        buffer = Buffer.from(await res.arrayBuffer());
+        contentType = res.headers.get('content-type') || 'image/png';
       }
 
-      const buf = await res.arrayBuffer();
-      const buffer = Buffer.from(buf);
-
-      // Determine MIME type from content-type header or magic bytes
-      const contentType = res.headers.get('content-type') || 'image/png';
       const base64Data = buffer.toString('base64');
 
       try {

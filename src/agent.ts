@@ -123,11 +123,13 @@ export class Agent {
     }));
   }
 
-  /** When tools are disabled, only allow search, fetch, and analyze_image.
-   * 'disableTool' means disable all file system and developer tools. */
+  /** When tools are disabled, only allow search, fetch, download_attachment, and analyze_image.
+   * 'disableTool' means disable all file system and developer tools.
+   * Exception: download_attachment is allowed because it saves to workspace/attachments/
+   * and can be analyzed with analyze_image using filePath parameter. */
   private getSafeToolDefinitions(): ToolDefinition[] {
     const allowed = [
-      'search', 'fetch', 'analyze_image',
+      'search', 'fetch', 'download_attachment', 'analyze_image',
     ];
     return this.tools
       .filter((t) => allowed.includes(t.name))
@@ -141,7 +143,7 @@ export class Agent {
   private loadSystemPrompt(): string {
     let prompt: string;
     if (this.config.disableTool) {
-      prompt = 'You are a helpful assistant with web search and URL fetching capabilities. You can search the web using the search tool and fetch web pages using the fetch tool. You do NOT have access to any file system, command execution, or other developer tools. Keep your answers concise and natural.';
+      prompt = 'You are a helpful assistant with web search, URL fetching, attachment download, and image analysis capabilities. You can search the web, fetch URLs, download Discord attachments to workspace/attachments/, and analyze images (either from URLs or local file paths). You do NOT have access to any file system, command execution, or other developer tools. Keep your answers concise and natural.';
     } else {
       prompt = 'You are a helpful coding assistant. You have access to tools for reading, creating, and modifying files, listing directories, and running commands. Use these tools to help the user with their coding tasks. Think step by step before taking action.';
     }
@@ -165,7 +167,7 @@ export class Agent {
 
     if (this.config.disableTool) {
       prompt += `\n\n[System Note]:
-You are in limited mode — you only have access to the search and fetch tools. You do NOT have any file system, command execution, credential, or other developer tools available.
+You are in limited mode — you only have access to search, fetch, download_attachment, and analyze_image tools. You can download attachments to workspace/attachments/ and analyze images using local file paths. You do NOT have access to any file system, command execution, credential, or other developer tools.
 Your default working directory is workspace/. All relative file paths resolve there unless you specify an absolute path.`;
     } else {
       prompt += `\n\n[System Note:
@@ -814,7 +816,7 @@ Continue the conversation naturally after assessing the situation.`;
         // If tools are disabled, reject unexpected tool calls (safety check)
         if (this.config.disableTool) {
           const allowed = [
-            'search', 'fetch', 'analyze_image',
+            'search', 'fetch', 'download_attachment', 'analyze_image',
           ];
           const hasUnsafe = response.toolCalls.some(tc => !allowed.includes(tc.name));
           if (hasUnsafe) {

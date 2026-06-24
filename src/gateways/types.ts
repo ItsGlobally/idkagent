@@ -16,7 +16,7 @@ export interface GatewayMessage {
 }
 
 export interface AgentEvent {
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'text' | 'error' | 'queue_status' | 'ask' | 'provider_log';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'text' | 'error' | 'queue_status' | 'ask' | 'provider_log' | 'attachment';
   content: string;
   metadata?: Record<string, unknown>;
 }

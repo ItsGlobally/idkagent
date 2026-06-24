@@ -21,6 +21,8 @@ import {
   javaIndexClearTool,
 } from './java_indexer.js';
 import { createSearchTool } from './search.js';
+import { attachDownloadTool } from './attach_download.js';
+import { imageAnalyzeTool } from './image_analyze.js';
 
 export function getAllTools(searchOptions?: { apiKey: string; model: string }): Tool[] {
   const tools: Tool[] = [
@@ -47,6 +49,14 @@ export function getAllTools(searchOptions?: { apiKey: string; model: string }): 
 
   if (searchOptions?.apiKey) {
     tools.push(createSearchTool(searchOptions));
+  }
+
+  // Always add attachment download tool
+  tools.push(attachDownloadTool);
+
+  // Add image analysis tool if search (Gemini) provider has an API key
+  if (searchOptions?.apiKey) {
+    tools.push(imageAnalyzeTool(searchOptions));
   }
 
   return tools;

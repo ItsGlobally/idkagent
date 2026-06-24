@@ -367,7 +367,9 @@ export class DiscordGateway implements Gateway {
               row.addComponents(new ButtonBuilder().setCustomId(`answer_${sessionId}_${expectedId}_other`).setLabel('Other (自訂)').setStyle(ButtonStyle.Secondary));
             }
               let extraComps: any[] | undefined = undefined;
-              if (event.type === 'text') {
+              if (event.type === 'attachment') {
+                msg = event.content;
+              } else if (event.type === 'text') {
                 msg = event.content;
               } else if (event.type === 'error') {
                 msg = `❌ **Error**: ${event.content}`;
@@ -425,6 +427,8 @@ export class DiscordGateway implements Gateway {
                   row.addComponents(new ButtonBuilder().setCustomId(`answer_${sessionId}_${(event.metadata?.userId as string) || ''}_${idx}`).setLabel(opt).setStyle(ButtonStyle.Primary));
                 });
                 extraComps = [row];
+              } else if (event.type === 'attachment') {
+                msg = event.content;
               } else if (event.type === 'text') {
                 msg = event.content;
               } else if (event.type === 'error') {
@@ -538,6 +542,17 @@ export class DiscordGateway implements Gateway {
 
     });
 
+    // ── Extract attachment info from a Discord message ────────
+    const extractAttachments = (msg: any): Array<{ url: string; fileName: string; contentType: string; sizeBytes: number }> => {
+      if (!msg.attachments) return [];
+      return msg.attachments.map((a: any) => ({
+        url: a.attachment,
+        fileName: a.filename || a.proxy_url?.split('/').pop() || 'file',
+        contentType: a.content_type || 'application/octet-stream',
+        sizeBytes: a.size || 0,
+      }));
+    };
+
     // Support legacy @mention
     this.client.on('messageCreate', async (msg) => {
       if (msg.author.bot) return;
@@ -556,8 +571,23 @@ export class DiscordGateway implements Gateway {
 
       const mentionRegex = new RegExp(`<@!?${botId}>`, 'g');
       // If it's a reply and they didn't explicitly @mention in the text, the regex won't match, which is fine
-      const content = msg.content.replace(mentionRegex, '').trim();
-      if (!content) return;
+      const baseContent = msg.content.replace(mentionRegex, '').trim();
+
+      // Check for attachments
+      const attachments = extractAttachments(msg);
+      if (baseContent.length === 0 && attachments.length === 0) return;
+
+      let content = baseContent;
+
+      if (attachments.length > 0) {
+        // Append attachment info so the model knows about them
+        const attachInfo = attachments.map((a, i) =>
+          `  [${i}] ${a.fileName} (${a.contentType}) — ${a.sizeBytes} bytes\n      URL: ${a.url}`
+        ).join('\n');
+        content = content
+          ? `${content}\n\n**Attachments:**\n${attachInfo}`
+          : `**Attachments:**\n${attachInfo}`;
+      }
 
       const sessionId = `discord-${msg.channelId}`;
 
@@ -614,6 +644,10 @@ export class DiscordGateway implements Gateway {
               });
               row.addComponents(new ButtonBuilder().setCustomId(`answer_${sessionId}_${expectedId}_other`).setLabel('Other (自訂)').setStyle(ButtonStyle.Secondary));
               extraComps = [row];
+            } else if (event.type === 'attachment') {
+              // Attachment info passed by the gateway
+              const attachList = event.content;
+              replyMsg = attachList;
             } else if (event.type === 'text') {
               replyMsg = event.content;
             } else if (event.type === 'error') {
@@ -668,6 +702,8 @@ export class DiscordGateway implements Gateway {
           msg = `📡 ${event.content}`;
         } else if (event.type === 'tool_call' && this.config.logging.showToolCalls) {
           msg = `🛠️ Tool Call: ${DiscordGateway.formatToolCall(event.content, event.metadata?.arguments as Record<string, unknown> | undefined, this.config.logging.truncateAt)}`;
+        } else if (event.type === 'attachment') {
+          msg = event.content;
         } else if (event.type === 'text') {
           msg = event.content;
         } else if (event.type === 'error') {
@@ -758,6 +794,8 @@ export class DiscordGateway implements Gateway {
               row.addComponents(new ButtonBuilder().setCustomId(`answer_${sessionId}_${expectedId}_${idx}`).setLabel(opt.substring(0, 80)).setStyle(ButtonStyle.Primary));
             });
             extraComps = [row];
+          } else if (event.type === 'attachment') {
+            msg = event.content;
           } else if (event.type === 'text') {
             msg = event.content;
           } else if (event.type === 'error') {

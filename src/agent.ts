@@ -513,6 +513,143 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     }
   }
 
+  /** Generate a unified-diff-like string for a patch_file operation. */
+  private static generatePatchDiff(search: string, replace: string): string {
+    const searchLines = search.split('\n');
+    const replaceLines = replace.split('\n');
+    const maxLen = Math.max(searchLines.length, replaceLines.length);
+
+    const lines: string[] = [];
+    lines.push('@@ ... @@');
+    for (let i = 0; i < maxLen; i++) {
+      if (i < searchLines.length && i < replaceLines.length) {
+        if (searchLines[i] === replaceLines[i]) {
+          lines.push(' ' + searchLines[i]);
+        } else {
+          lines.push('-' + searchLines[i]);
+          lines.push('+' + replaceLines[i]);
+        }
+      } else if (i < searchLines.length) {
+        lines.push('-' + searchLines[i]);
+      } else {
+        lines.push('+' + replaceLines[i]);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  /** Generate a unified-diff-like string for a create_file operation (all additions). */
+  private static generateCreateDiff(content: string): string {
+    const contentLines = content.split('\n');
+    const lines: string[] = [];
+    lines.push('@@ ... @@');
+    for (const cl of contentLines) {
+      lines.push('+' + cl);
+    }
+    return lines.join('\n');
+  }
+
+  /** Generate a summary of the work session, append to summary.jsonl, and update metadata.json.
+   * Called fire-and-forget after the final response to avoid blocking the user. */
+  private async generateWorkingDataSummary(
+    userInstruction: string,
+    toolCallLogs: Array<{ name: string; arguments: any; result: string; success: boolean }>,
+    finalResponse: string,
+    wdSessionDir: string,
+  ): Promise<void> {
+    try {
+      const toolCallsText = toolCallLogs
+        .map((log, i) => {
+          const argsStr = typeof log.arguments === 'object' ? JSON.stringify(log.arguments) : String(log.arguments || '');
+          const status = log.success ? '✅ Success' : '❌ Failed';
+          return `  ${i + 1}. ${log.name}(${argsStr.substring(0, 300)}) — ${status}`;
+        })
+        .join('\n');
+
+      const summaryPrompt = `You are a work session summarizer. Review the following work session and provide a concise summary of what was accomplished.
+
+=== USER INSTRUCTION ===
+${userInstruction}
+
+=== TOOL CALLS ===
+${toolCallsText}
+
+=== FINAL RESPONSE ===
+${finalResponse}
+
+Provide a concise summary (2-4 sentences) describing:
+1. What the user asked for
+2. What actions were taken (files read/modified, commands run, etc.)
+3. What the final outcome was
+
+Then, on a new line, output a JSON object with these exact keys:
+  - "success": true/false — did the work succeed overall?
+  - "build": true/false — did any build/compile operation pass? (default false if no build occurred)
+  - "tests": true/false — did any test operation pass? (default false if no tests occurred)
+
+Example output:
+The user asked to fix a typo in config.ts. The agent read the file, applied a patch to fix the typo, and confirmed the fix.
+{"success":true,"build":false,"tests":false}`;
+
+      const chatMessages: Message[] = [{ role: 'user', content: summaryPrompt }];
+      let res;
+      try {
+        res = await this.providers.main.chat(chatMessages, []);
+      } catch (err) {
+        if (this.providers.fallback) {
+          res = await this.providers.fallback.chat(chatMessages, []);
+        } else {
+          throw err;
+        }
+      }
+
+      const raw = (res.content?.trim() || 'Summary generation failed.');
+      const summary = raw.substring(0, 2000);
+
+      // Extract JSON metadata from the last line if present
+      let metaSuccess = true;
+      let metaBuild = false;
+      let metaTests = false;
+      const lines = raw.split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.startsWith('{') && line.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(line);
+            if (typeof parsed.success === 'boolean') metaSuccess = parsed.success;
+            if (typeof parsed.build === 'boolean') metaBuild = parsed.build;
+            if (typeof parsed.tests === 'boolean') metaTests = parsed.tests;
+          } catch { /* skip */ }
+          break;
+        }
+      }
+
+      // Append summary line to summary.jsonl
+      const summaryLine = JSON.stringify({
+        type: 'summary',
+        timestamp: new Date().toISOString(),
+        content: summary,
+      });
+      fs.appendFileSync(path.join(wdSessionDir, 'summary.jsonl'), summaryLine + '\n', 'utf-8');
+
+      // Update metadata.json with summary info
+      const metaPath = path.join(wdSessionDir, 'metadata.json');
+      try {
+        const existingMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        existingMeta.success = metaSuccess;
+        existingMeta.build = metaBuild;
+        existingMeta.tests = metaTests;
+        // Append summary text to metadata for quick reference
+        existingMeta.summary = summary.replace(/\n\{.*\}$/, '').trim();
+        fs.writeFileSync(metaPath, JSON.stringify(existingMeta, null, 2), 'utf-8');
+      } catch { /* best-effort */ }
+
+      console.log(`📝 Working data summary written to ${wdSessionDir}`);
+    } catch (err) {
+      console.error(`[WorkingData] Summary generation failed:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
   /** Handle a message from a gateway via Queue */
   async handleMessage(
     message: GatewayMessage,
@@ -571,6 +708,9 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     onEvent: AgentEventHandler,
   ): Promise<void> {
     const contentTrimmed = message.content.trim();
+
+    // Track user instruction for saveWorkingDatas feature
+    let userInstruction: string | undefined;
 
     if (contentTrimmed === '/reset') {
       this.clearSession(message.sessionId);
@@ -637,6 +777,7 @@ Continue the conversation naturally after assessing the situation.`;
     } else {
       // Minify user input to save tokens
       const minifiedContent = message.content.replace(/\n{3,}/g, '\n\n').trim();
+      userInstruction = minifiedContent;
       let finalContent = minifiedContent;
 
       if (this.providers.guardrail) {
@@ -705,6 +846,10 @@ Continue the conversation naturally after assessing the situation.`;
 
     // Cache system prompt for all iterations of this message (avoid redundant disk reads)
     const systemPromptContent = this.loadSystemPrompt();
+
+    // ── Working Data Tracking ─────────────────────────────
+    const toolCallLogs: Array<{ name: string; arguments: any; result: string; success: boolean }> = [];
+    let toolCallCount = 0;
 
     // Agentic loop: keep calling LLM until it responds with text (no tool calls)
     let iterations = 0;
@@ -896,6 +1041,10 @@ Continue the conversation naturally after assessing the situation.`;
             metadata: { toolName: tc.name, success },
           });
 
+          // Log tool call for working data tracking
+          toolCallCount++;
+          toolCallLogs.push({ name: tc.name, arguments: tc.arguments, result, success });
+
           // Mask credential values from history to prevent leakage to session files & LLM context
           const resultForHistory = (tc.name === 'credential' && tc.arguments?.action === 'get')
             ? `[Credential "${tc.arguments?.name || 'unknown'}" retrieved - value hidden from history]`
@@ -931,6 +1080,98 @@ Continue the conversation naturally after assessing the situation.`;
       messages.push({ role: 'assistant', content: text });
       this.sessions.set(message.sessionId, messages);
       this.saveSession(message.sessionId);
+
+      // ── Save Working Data (if enabled & >5 tool calls) ──
+      if (this.config.saveWorkingDatas && toolCallCount > 5 && userInstruction) {
+        const wdRoot = path.resolve(process.cwd(), '..', 'working_data');
+        if (!fs.existsSync(wdRoot)) fs.mkdirSync(wdRoot, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const sessionLabel = `${message.sessionId}-${timestamp}`;
+        const wdSessionDir = path.join(wdRoot, sessionLabel);
+        const patchDir = path.join(wdSessionDir, 'patch');
+        fs.mkdirSync(patchDir, { recursive: true });
+
+        // Generate patch diffs for file-modifying tools and build tool call JSONL lines
+        const toolCallLines: string[] = [];
+        let filesChanged = 0;
+
+        for (const log of toolCallLogs) {
+          let patchFile: string | undefined;
+
+          if (log.name === 'patch_file' && log.success && log.arguments?.path) {
+            const safeName = String(log.arguments.path).replace(/[^a-zA-Z0-9._-]/g, '_');
+            const diffPath = path.join(patchDir, `${safeName}.diff`);
+            const diff = Agent.generatePatchDiff(
+              String(log.arguments.search || ''),
+              String(log.arguments.replace || ''),
+            );
+            fs.writeFileSync(diffPath, diff, 'utf-8');
+            patchFile = `patch/${safeName}.diff`;
+            filesChanged++;
+          } else if (log.name === 'create_file' && log.success && log.arguments?.path) {
+            const safeName = String(log.arguments.path).replace(/[^a-zA-Z0-9._-]/g, '_');
+            const diffPath = path.join(patchDir, `${safeName}.diff`);
+            const diff = Agent.generateCreateDiff(
+              String(log.arguments.content || ''),
+            );
+            fs.writeFileSync(diffPath, diff, 'utf-8');
+            patchFile = `patch/${safeName}.diff`;
+            filesChanged++;
+          }
+
+          toolCallLines.push(JSON.stringify({
+            type: 'tool_call',
+            timestamp: new Date().toISOString(),
+            name: log.name,
+            arguments: log.arguments,
+            result: log.result,
+            success: log.success,
+            patchFile,
+          }));
+        }
+
+        // Write summary.jsonl
+        const summaryLines: string[] = [
+          JSON.stringify({
+            type: 'instruction',
+            timestamp: new Date().toISOString(),
+            userId: message.userId,
+            userName: message.userName || undefined,
+            content: userInstruction,
+          }),
+          ...toolCallLines,
+          JSON.stringify({
+            type: 'response',
+            timestamp: new Date().toISOString(),
+            content: text,
+          }),
+        ];
+        fs.writeFileSync(path.join(wdSessionDir, 'summary.jsonl'), summaryLines.join('\n') + '\n', 'utf-8');
+        console.log(`📝 Working data saved to ${wdSessionDir}`);
+
+        // Write initial metadata.json (success/build/tests will be updated by summary)
+        fs.writeFileSync(path.join(wdSessionDir, 'metadata.json'), JSON.stringify({
+          session: sessionLabel,
+          model: this.config.models.main.model,
+          success: true,
+          build: false,
+          tests: false,
+          files_changed: filesChanged,
+        }, null, 2), 'utf-8');
+
+        // Queue the summary generation through the session queue (same as normal requests),
+        // so it respects message ordering and does NOT write to session history.
+        const summaryTask = async () => {
+          try {
+            await this.generateWorkingDataSummary(userInstruction, toolCallLogs, text, wdSessionDir);
+          } catch (err) {
+            console.error(`[WorkingData] Failed to generate summary:`, err);
+          }
+        };
+        const q = this.sessionQueues.get(message.sessionId);
+        if (q) q.push(summaryTask);
+      }
+
       return;
     }
 

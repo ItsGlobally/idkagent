@@ -87,6 +87,9 @@ export interface AgentConfig {
   lsp: LspConfig;
   search: SearchConfig;
   image: ImageConfig;
+  /** When true, saves detailed working data (user instruction, all tool calls, final response, and summary)
+   * as JSONL files in .working_datas/ whenever a task involves more than 5 tool calls. */
+  saveWorkingDatas: boolean;
   /** When true, all tool calls are disabled — agent becomes a pure chat bot */
   disableTool: boolean;
 }
@@ -171,6 +174,7 @@ const DEFAULT_CONFIG: AgentConfig = {
     provider: 'gemini',
     model: 'gemini-2.5-flash-lite',
   },
+  saveWorkingDatas: false,
   disableTool: false,
 };
 
@@ -369,6 +373,7 @@ export function saveConfig(config: AgentConfig): void {
     search: config.search,
     image: config.image,
   };
+  if (config.saveWorkingDatas) cleaned.saveWorkingDatas = true;
   if (config.disableTool) cleaned.disableTool = true;
   fs.writeFileSync(configPath, yaml.stringify(cleaned), 'utf-8');
 }

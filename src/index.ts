@@ -522,6 +522,7 @@ function saveConfig(config: AgentConfig, configPath: string): void {
     search: config.search,
     image: config.image,
   };
+  if (config.saveWorkingDatas) cleaned.saveWorkingDatas = true;
   fs.writeFileSync(configPath, yaml.stringify(cleaned), 'utf-8');
 }
 

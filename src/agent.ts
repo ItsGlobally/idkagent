@@ -22,6 +22,8 @@ export class Agent {
   private cancelledSessions: Set<string> = new Set();
   /** Sessions currently inside _handleMessageInternal (interrupted on shutdown) */
   private processingSessions: Set<string> = new Set();
+  /** Per-session AbortControllers for cancelling in-flight LLM calls */
+  private sessionAbortControllers: Map<string, AbortController> = new Map();
 
   constructor(
     providers: { main: LLMProvider; fallback?: LLMProvider; guardrail?: LLMProvider },
@@ -145,7 +147,9 @@ export class Agent {
     if (this.config.disableTool) {
       prompt = 'You are a helpful assistant with web search, URL fetching, attachment download, and image analysis capabilities. You can search the web, fetch URLs, download Discord attachments to workspace/attachments/, and analyze images (either from URLs or local file paths). You do NOT have access to any file system, command execution, or other developer tools. Keep your answers concise and natural.';
     } else {
-      prompt = 'You are a helpful coding assistant. You have access to tools for reading, creating, and modifying files, listing directories, and running commands. Use these tools to help the user with their coding tasks. Think step by step before taking action.';
+      prompt = `You are a helpful coding assistant. You have access to tools for reading, creating, and modifying files, listing directories, and running commands. Use these tools to help the user with their coding tasks. Think step by step before taking action.
+
+IMPORTANT — NEVER attempt to restart, kill, start, or manage the gateway process itself (e.g. systemctl, pm2, kill, pkill, service commands). You are ALREADY running inside the gateway. Restarting or killing it will disconnect you and the user. If the user asks you to restart the gateway, inform them that restarting would terminate your own process — instead they should restart it externally.`;
     }
     
     const readOptionalFile = (filename: string) => {
@@ -287,8 +291,8 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     return this.sessions.get(sessionId)!;
   }
 
-  /** Save a session to disk asynchronously */
-  private saveSession(sessionId: string, sync = false): void {
+  /** Save a session to disk synchronously (always flushes to disk immediately). */
+  private saveSession(sessionId: string): void {
     if (this.isEphemeral) return;
 
     const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
@@ -316,15 +320,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
           return safeMsg;
         });
       const json = JSON.stringify(safeMessages, null, 2);
-      if (sync) {
-        // Synchronous write for shutdown — guaranteed to flush
-        fs.writeFileSync(sessionFile, json, 'utf-8');
-      } else {
-        // Fire-and-forget async write for normal operation
-        fs.promises.writeFile(sessionFile, json).catch(err => {
-          console.error(`[Session] Failed to save session ${sessionId}:`, err);
-        });
-      }
+      fs.writeFileSync(sessionFile, json, 'utf-8');
     }
   }
 
@@ -333,7 +329,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     if (this.isEphemeral) return;
     let count = 0;
     for (const sessionId of this.sessions.keys()) {
-      this.saveSession(sessionId, true);
+      this.saveSession(sessionId);
       count++;
     }
     if (count > 0) {
@@ -494,13 +490,20 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     }
   }
 
-  /** Cancel a running session (called from gateway, bypasses the queue) */
+  /** Cancel a running session (called from gateway, bypasses the queue).
+   * Aborts any in-flight LLM API call immediately (via AbortController). */
   cancelSession(sessionId: string): void {
     this.cancelledSessions.add(sessionId);
     // Clear any pending queue items so they don't run after the current task is cancelled
     const queue = this.sessionQueues.get(sessionId);
     if (queue) {
       queue.length = 0;
+    }
+    // Abort any in-flight LLM API call for this session
+    const controller = this.sessionAbortControllers.get(sessionId);
+    if (controller) {
+      controller.abort();
+      this.sessionAbortControllers.delete(sessionId);
     }
   }
 
@@ -729,6 +732,12 @@ The user asked to fix a typo in config.ts. The agent read the file, applied a pa
       return;
     }
 
+    if (contentTrimmed === '/stop') {
+      this.cancelSession(message.sessionId);
+      onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
+      return;
+    }
+
     // Snapshot usage at the start — used to compute per-message token total.
     // Use spread to take a copy so usageBefore is never mutated by reference.
     const _usageBefore = this.usageMap.get(message.sessionId);
@@ -762,18 +771,27 @@ The user asked to fix a typo in config.ts. The agent read the file, applied a pa
       // enforce strict system-message-first ordering (e.g. DeepSeek).
       // Because it's never pushed into `messages`, it is never persisted to disk,
       // preventing accumulation across multiple restarts.
-      pendingRestartNotice = `⚠️ GATEWAY RESTART NOTIFICATION — READ CAREFULLY
-The gateway (${message.gateway || 'unknown'}) was restarted at ${new Date().toISOString()}. Your previous conversation has been recovered from persistent storage.
+      pendingRestartNotice = `🔁 GATEWAY RESTARTED — THE GATEWAY IS NOW RUNNING AGAIN
+Timestamp: ${new Date().toISOString()} — Gateway: ${message.gateway || 'unknown'}
 
-⚠️ Any in-progress tool operations, file edits, command executions, or multi-step tasks were INTERRUPTED and did NOT complete.
+The gateway process was restarted (e.g. due to a code update, crash recovery, or manual restart).
+It is now ONLINE and RUNNING. You are currently inside this running gateway process.
 
-You MUST:
-1. Assess what you were doing before the restart (review the conversation history above).
-2. If you were in the middle of a multi-step operation, re-perform any steps that were lost.
-3. Inform the user about the restart and whether any actions need their attention.
-4. Do NOT assume previous tool calls succeeded — they were interrupted and their results are lost.
+Your previous conversation has been recovered from disk. Continue where you left off.
 
-Continue the conversation naturally after assessing the situation.`;
+IMPORTANT — DO NOT try to restart, kill, or start the gateway/system process:
+- The gateway IS already running — you are talking through it right now
+- Any tool calls you make are already being processed by the active gateway
+- Do NOT run "systemctl restart", "kill", "pm2 restart", or similar commands
+- If you see a restart-related command in previous history, it already succeeded before this recovery
+
+TOOL OPERATIONS AFTER RECOVERY:
+- Any in-progress tool results that came AFTER the last saved checkpoint are lost
+- Re-examine the conversation history above
+- If you were in the middle of a multi-step operation, re-execute the steps that were lost
+- Inform the user about the restart and what was recovered
+
+Continue the conversation naturally.`;
     } else {
       // Minify user input to save tokens
       const minifiedContent = message.content.replace(/\n{3,}/g, '\n\n').trim();
@@ -913,31 +931,72 @@ Continue the conversation naturally after assessing the situation.`;
       const freshSystemPrompt: Message = { role: 'system', content: freshSystemContent };
       const messagesForModel: Message[] = [freshSystemPrompt, ...messages];
 
-      let response;
+      // Create AbortController for this iteration — allows cancelSession() to abort in-flight LLM calls
+      const abortController = new AbortController();
+      this.sessionAbortControllers.set(message.sessionId, abortController);
+      const signal = abortController.signal;
+
+      let response: Awaited<ReturnType<LLMProvider['chat']>>;
       try {
         if (this.useFallback && this.providers.fallback) {
           console.warn('Main provider previously failed, using fallback directly.');
           onEvent({ type: 'text', content: '⚠️ Main provider previously failed, using fallback provider.' });
-          response = await this.providers.fallback.chat(messagesForModel, toolDefs);
+          response = await this.providers.fallback.chat(messagesForModel, toolDefs, onEvent, signal);
         } else {
-          response = await this.providers.main.chat(messagesForModel, toolDefs, onEvent);
+          response = await this.providers.main.chat(messagesForModel, toolDefs, onEvent, signal);
           this.useFallback = false;
         }
-      } catch (err) {
+        // Clean up controller on success
+        if (this.sessionAbortControllers.get(message.sessionId) === abortController) {
+          this.sessionAbortControllers.delete(message.sessionId);
+        }
+      } catch (err: any) {
+        // If the error is an abort (from /stop), clean up and return immediately
+        const isAbort = err?.name === 'AbortError' || err?.code === 'ABORT_ERR';
+        if (isAbort || err?.message?.includes('aborted')) {
+          this.sessionAbortControllers.delete(message.sessionId);
+          while (messages.length > 0 && messages[messages.length - 1].role !== 'user') {
+            messages.pop();
+          }
+          this.sessions.set(message.sessionId, messages);
+          this.saveSession(message.sessionId);
+          onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
+          return;
+        }
+
         if (this.providers.fallback && !this.useFallback) {
           console.warn(`Main provider failed. Falling back to secondary provider. Error:`, err);
           onEvent({ type: 'text', content: `⚠️ Main provider failed, switching to fallback provider.` });
           this.useFallback = true;
           try {
-            response = await this.providers.fallback.chat(messagesForModel, toolDefs, onEvent);
-          } catch (err2) {
+            const fbController = new AbortController();
+            this.sessionAbortControllers.set(message.sessionId, fbController);
+            response = await this.providers.fallback.chat(messagesForModel, toolDefs, onEvent, fbController.signal);
+            // Clean up fallback controller on success
+            if (this.sessionAbortControllers.get(message.sessionId) === fbController) {
+              this.sessionAbortControllers.delete(message.sessionId);
+            }
+          } catch (err2: any) {
+            const fbIsAbort = err2?.name === 'AbortError' || err2?.code === 'ABORT_ERR';
+            if (fbIsAbort || err2?.message?.includes('aborted')) {
+              this.sessionAbortControllers.delete(message.sessionId);
+              while (messages.length > 0 && messages[messages.length - 1].role !== 'user') {
+                messages.pop();
+              }
+              this.sessions.set(message.sessionId, messages);
+              this.saveSession(message.sessionId);
+              onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
+              return;
+            }
             const errorMsg = err2 instanceof Error ? err2.message : String(err2);
             onEvent({ type: 'error', content: `LLM API Error (Main and Fallback failed): ${errorMsg}` });
+            this.sessionAbortControllers.delete(message.sessionId);
             return;
           }
         } else {
           const errorMsg = err instanceof Error ? err.message : String(err);
           onEvent({ type: 'error', content: `LLM API Error: ${errorMsg}` });
+          this.sessionAbortControllers.delete(message.sessionId);
           return;
         }
       }

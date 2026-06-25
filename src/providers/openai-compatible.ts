@@ -141,7 +141,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     return 128_000;
   }
 
-  async chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback): Promise<LLMResponse> {
+  async chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback, signal?: AbortSignal): Promise<LLMResponse> {
     const openaiMessages = toOpenAIMessages(messages);
     const openaiTools = tools.length > 0 ? toOpenAITools(tools) : undefined;
 
@@ -157,7 +157,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
           tools: openaiTools,
           max_completion_tokens: this.maxTokens,
           temperature: this.temperature,
-        });
+        }, { signal });
 
         const choice = response?.choices?.[0];
         if (!choice) {

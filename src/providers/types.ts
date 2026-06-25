@@ -46,5 +46,5 @@ export interface LLMProviderOptions {
 export interface LLMProvider {
   readonly name: string;
   readonly maxContextWindow: number;
-  chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback): Promise<LLMResponse>;
+  chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback, signal?: AbortSignal): Promise<LLMResponse>;
 }

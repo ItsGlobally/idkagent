@@ -232,7 +232,7 @@ export class GeminiProvider implements LLMProvider {
     return 1_000_000;
   }
 
-  async chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback): Promise<LLMResponse> {
+  async chat(messages: Message[], tools: ToolDefinition[], onEvent?: ProviderEventCallback, signal?: AbortSignal): Promise<LLMResponse> {
     const { systemInstruction, contents } = toGeminiMessages(messages);
 
     const config: Record<string, any> = {
@@ -262,11 +262,24 @@ export class GeminiProvider implements LLMProvider {
     for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
       try {
 
-        const response = await this.ai.models.generateContent({
+        // If an abort signal is provided, race the API call against it
+        const generatePromise = this.ai.models.generateContent({
           model: this.model,
           contents,
           config,
         });
+
+        let response: any;
+        if (signal) {
+          response = await Promise.race([
+            generatePromise,
+            new Promise<any>((_, reject) => {
+              signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            }),
+          ]);
+        } else {
+          response = await generatePromise;
+        }
 
         const result: LLMResponse = {};
         const candidate = response.candidates?.[0];

@@ -764,6 +764,22 @@ The user asked to fix a typo in config.ts. The agent read the file, applied a pa
       onEvent({ type: 'text', content: '⏹️ **對話已停止** (Conversation stopped by user.)' });
       return;
     } else if (message.action === 'gateway_restarted') {
+      // Extract the last user instruction from recovered session history for saveWorkingDatas
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user' && messages[i].content) {
+          const raw = messages[i].content!;
+          // Format is: <user_input>\n[User: ...]\n<content>\n</user_input>
+          const lines = raw.split('\n');
+          if (lines.length >= 4 && lines[0].startsWith('<user_input>') && lines[lines.length - 1].startsWith('</user_input>')) {
+            // Skip first line (<user_input>), second line ([User: ...]), last line (</user_input>)
+            userInstruction = lines.slice(2, -1).join('\n').trim();
+          } else {
+            userInstruction = raw.substring(0, 1000);
+          }
+          break;
+        }
+      }
+
       // Store the restart notice in a local variable instead of unshifting a
       // separate system message into history. It will be prepended to the fresh
       // system prompt at call time, resulting in a SINGLE system message at the

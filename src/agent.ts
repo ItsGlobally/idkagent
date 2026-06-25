@@ -491,19 +491,22 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   }
 
   /** Cancel a running session (called from gateway, bypasses the queue).
-   * Aborts any in-flight LLM API call immediately (via AbortController). */
+   * Aborts any in-flight LLM API call immediately (via AbortController).
+   * Only sets the cancelledSessions flag if there IS an active AbortController
+   * (meaning the agent loop is currently running for this session).
+   * Otherwise the stale flag would cause the NEXT command to be immediately stopped. */
   cancelSession(sessionId: string): void {
-    this.cancelledSessions.add(sessionId);
+    const controller = this.sessionAbortControllers.get(sessionId);
+    if (controller) {
+      // Only flag the session as cancelled if we actually have an in-flight call to abort
+      this.cancelledSessions.add(sessionId);
+      controller.abort();
+      this.sessionAbortControllers.delete(sessionId);
+    }
     // Clear any pending queue items so they don't run after the current task is cancelled
     const queue = this.sessionQueues.get(sessionId);
     if (queue) {
       queue.length = 0;
-    }
-    // Abort any in-flight LLM API call for this session
-    const controller = this.sessionAbortControllers.get(sessionId);
-    if (controller) {
-      controller.abort();
-      this.sessionAbortControllers.delete(sessionId);
     }
   }
 

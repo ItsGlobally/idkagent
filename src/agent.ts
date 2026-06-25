@@ -745,6 +745,11 @@ The user asked to fix a typo in config.ts. The agent read the file, applied a pa
 
     const messages = this.getSession(message.sessionId);
 
+    // ── Working Data Tracking ─────────────────────────────
+    // Declared early so gateway_restarted branch can pre-populate from recovered history.
+    const toolCallLogs: Array<{ name: string; arguments: any; result: string; success: boolean }> = [];
+    let toolCallCount = 0;
+
     // Local variable to hold a gateway-restart notice if applicable.
     // Instead of injecting a separate system message into history (which
     // can confuse providers whose Jinja templates enforce strict ordering),
@@ -777,6 +782,35 @@ The user asked to fix a typo in config.ts. The agent read the file, applied a pa
             userInstruction = raw.substring(0, 1000);
           }
           break;
+        }
+      }
+
+      // Pre-populate toolCallLogs from recovered session history so that
+      // saveWorkingData captures tool calls made BEFORE the crash as well.
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        if (msg.role === 'assistant' && msg.toolCalls) {
+          for (const tc of msg.toolCalls) {
+            // Find the matching tool result that follows this assistant message
+            let result = '';
+            let success = true;
+            for (let j = i + 1; j < messages.length; j++) {
+              const toolMsg = messages[j];
+              if (toolMsg.role === 'tool' && toolMsg.toolCallId === tc.id) {
+                result = toolMsg.content || '';
+                success = !result.startsWith('Error:');
+                break;
+              }
+              if (toolMsg.role !== 'tool') break; // crossed into non-tool territory
+            }
+            toolCallLogs.push({
+              name: tc.name,
+              arguments: tc.arguments,
+              result,
+              success,
+            });
+            toolCallCount++;
+          }
         }
       }
 
@@ -880,10 +914,6 @@ Continue the conversation naturally.`;
 
     // Cache system prompt for all iterations of this message (avoid redundant disk reads)
     const systemPromptContent = this.loadSystemPrompt();
-
-    // ── Working Data Tracking ─────────────────────────────
-    const toolCallLogs: Array<{ name: string; arguments: any; result: string; success: boolean }> = [];
-    let toolCallCount = 0;
 
     // Agentic loop: keep calling LLM until it responds with text (no tool calls)
     let iterations = 0;

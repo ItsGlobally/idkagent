@@ -219,11 +219,8 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
 
     console.log(`${GREEN}✅ Graceful shutdown complete.${RESET}`);
 
-    // 3. If running inside systemd, let systemd handle the exit; otherwise exit ourselves
-    if (process.env.IDKAGENT_AS_SERVICE !== '1') {
-      process.exit(0);
-    }
-    // For systemd: just let the main Promise resolve naturally so the process exits cleanly
+    // Exit to prevent hanging when gw.start() never resolves (event loop gateways).
+    process.exit(0);
   };
 
   // Only register signal handlers if not in a child process / test env

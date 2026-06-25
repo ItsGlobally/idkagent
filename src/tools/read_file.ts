@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
+import { WORKSPACE_DIR } from '../config.js';
 import type { Tool } from './types.js';
 
 function resolveWorkspacePath(p: string): string {
@@ -8,7 +9,7 @@ function resolveWorkspacePath(p: string): string {
     p = p.replace('~', homedir());
   }
   if (isAbsolute(p)) return p;
-  return resolve(process.cwd(), 'workspace', p);
+  return resolve(WORKSPACE_DIR, p);
 }
 
 export const readFileTool: Tool = {

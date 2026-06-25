@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
+import { WORKSPACE_DIR } from '../config.js';
 import type { Tool } from './types.js';
 
 function resolveWorkspacePath(p: string): string {
@@ -8,7 +9,7 @@ function resolveWorkspacePath(p: string): string {
     p = p.replace('~', homedir());
   }
   if (isAbsolute(p)) return p;
-  const workspace = resolve(process.cwd(), 'workspace');
+  const workspace = resolve(WORKSPACE_DIR);
   if (p === '.' || p === '') return workspace;
   return resolve(workspace, p);
 }

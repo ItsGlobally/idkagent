@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Tool } from './types.js';
+import { AGENT_HOME } from '../config.js';
 
 export const updateMemoryTool: Tool = {
   name: 'update_memory',
@@ -15,7 +16,7 @@ export const updateMemoryTool: Tool = {
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const content = args.content as string;
-    const memoryPath = path.resolve(process.cwd(), '..', 'MEMORY.md');
+    const memoryPath = path.join(AGENT_HOME, 'MEMORY.md');
     
     let existing = '';
     if (fs.existsSync(memoryPath)) {

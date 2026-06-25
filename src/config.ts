@@ -180,9 +180,15 @@ const DEFAULT_CONFIG: AgentConfig = {
 
 // ─── Config File Path ────────────────────────────────────────
 
+/** The agent home directory (~/.idkagent/) — resolved once from process.cwd() at import time.
+ * All data files (sessions, memory, credentials, workspace) live under this root. */
+export const AGENT_HOME = path.resolve(process.cwd(), '..');
+/** The workspace directory (~/.idkagent/workspace/) — where files are read/written by tools. */
+export const WORKSPACE_DIR = path.join(AGENT_HOME, 'workspace');
+
 /** Returns the data root directory (parent of the repo root) */
 export function getDataDir(): string {
-  return path.resolve(process.cwd(), '..');
+  return AGENT_HOME;
 }
 
 function getConfigPath(): string {

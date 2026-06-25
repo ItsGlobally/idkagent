@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Tool } from './types.js';
+import { AGENT_HOME } from '../config.js';
 
 export interface AttachmentInfo {
   url: string;
@@ -13,7 +14,7 @@ export interface AttachmentInfo {
  * Download a file from a URL to the workspace attachments directory.
  */
 async function downloadFile(url: string, fileName: string): Promise<string> {
-  const downloadDir = path.resolve(process.cwd(), '..', 'attachments');
+  const downloadDir = path.join(AGENT_HOME, 'attachments');
   if (!fs.existsSync(downloadDir)) {
     fs.mkdirSync(downloadDir, { recursive: true });
   }

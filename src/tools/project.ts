@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, isAbsolute } from 'node:path';
+import { AGENT_HOME, WORKSPACE_DIR } from '../config.js';
 import type { Tool } from './types.js';
 
 // ─── Types ─────────────────────────────────────────────────────
@@ -36,7 +37,7 @@ function normalizeLanguage(raw: string): ProjectLanguage {
 // ─── Registry I/O ──────────────────────────────────────────────
 
 export function getProjectsFilePath(): string {
-  return resolve(process.cwd(), '..', 'projects.json');
+  return resolve(AGENT_HOME, 'projects.json');
 }
 
 export function readRegistry(): ProjectRegistry {
@@ -139,8 +140,8 @@ export const projectTool: Tool = {
       const projectPath: string = rawPath
         ? isAbsolute(rawPath)
           ? rawPath
-          : resolve(process.cwd(), '..', 'workspace', rawPath)
-        : resolve(process.cwd(), '..', 'workspace', name);
+          : resolve(WORKSPACE_DIR, rawPath)
+        : resolve(WORKSPACE_DIR, name);
 
       if (action === 'create') {
         mkdirSync(projectPath, { recursive: true });
@@ -181,7 +182,7 @@ export const projectTool: Tool = {
 
       const rawPath = args.path as string | undefined;
       if (rawPath) {
-        entry.path = isAbsolute(rawPath) ? rawPath : resolve(process.cwd(), '..', 'workspace', rawPath);
+        entry.path = isAbsolute(rawPath) ? rawPath : resolve(WORKSPACE_DIR, rawPath);
       }
 
       writeRegistry(registry);

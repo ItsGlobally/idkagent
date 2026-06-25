@@ -2,6 +2,7 @@ import type { LLMProvider, Message, ToolDefinition } from './providers/types.js'
 import type { Tool, ToolContext } from './tools/types.js';
 import type { AgentEvent, AgentEventHandler, GatewayMessage } from './gateways/types.js';
 import type { AgentConfig } from './config.js';
+import { AGENT_HOME } from './config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -154,7 +155,7 @@ IMPORTANT — NEVER attempt to restart, kill, start, or manage the gateway proce
     
     const readOptionalFile = (filename: string) => {
       try {
-        const filepath = path.resolve(process.cwd(), '..', filename);
+        const filepath = path.join(AGENT_HOME, filename);
         if (fs.existsSync(filepath)) {
           const label = filename.replace('.md', '').toUpperCase();
           return `\n\n=== ${label} ===\n` + fs.readFileSync(filepath, 'utf-8');
@@ -207,7 +208,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       let messages: Message[] = [];
 
       if (!this.isEphemeral) {
-        const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
+        const sessionsDir = path.join(AGENT_HOME, '.sessions');
         const sessionFile = path.join(sessionsDir, `${sessionId}.json`);
         if (fs.existsSync(sessionFile)) {
           try {
@@ -295,7 +296,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   private saveSession(sessionId: string): void {
     if (this.isEphemeral) return;
 
-    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
+    const sessionsDir = path.join(AGENT_HOME, '.sessions');
     if (!fs.existsSync(sessionsDir)) {
       fs.mkdirSync(sessionsDir, { recursive: true });
     }
@@ -340,7 +341,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     // Only those need recovery on restart (conversations ended normally are skipped).
     // This approach checks actual session state rather than relying on
     // runtime tracking sets that can have race conditions.
-    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
+    const sessionsDir = path.join(AGENT_HOME, '.sessions');
     const activePath = path.join(sessionsDir, '.active');
     const activeIds: string[] = [];
 
@@ -513,7 +514,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   /** Clear a session's history */
   clearSession(sessionId: string): void {
     this.sessions.delete(sessionId);
-    const sessionFile = path.resolve(process.cwd(), '..', '.sessions', `${sessionId}.json`);
+    const sessionFile = path.join(AGENT_HOME, '.sessions', `${sessionId}.json`);
     if (fs.existsSync(sessionFile)) {
       fs.unlinkSync(sessionFile);
     }
@@ -726,7 +727,7 @@ The user asked to fix a typo in config.ts. The agent read the file, applied a pa
     }
 
     if (contentTrimmed === '/resetmemory') {
-      const memoryPath = path.resolve(process.cwd(), '..', 'MEMORY.md');
+      const memoryPath = path.join(AGENT_HOME, 'MEMORY.md');
       if (fs.existsSync(memoryPath)) {
         fs.unlinkSync(memoryPath);
       }
@@ -1191,7 +1192,7 @@ Continue the conversation naturally.`;
 
       // ── Save Working Data (if enabled & >5 tool calls) ──
       if (this.config.saveWorkingDatas && toolCallCount > 5 && userInstruction) {
-        const wdRoot = path.resolve(process.cwd(), '..', 'working_data');
+        const wdRoot = path.join(AGENT_HOME, 'working_data');
         if (!fs.existsSync(wdRoot)) fs.mkdirSync(wdRoot, { recursive: true });
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const sessionLabel = `${message.sessionId}-${timestamp}`;

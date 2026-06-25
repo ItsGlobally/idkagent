@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { Tool } from './types.js';
+import { WORKSPACE_DIR } from '../config.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ interface ProjectIndex {
 // ─── Index Storage ──────────────────────────────────────────────
 
 function getIndexDir(): string {
-  const dir = path.resolve(process.cwd(), 'workspace', '.java-index');
+  const dir = path.resolve(WORKSPACE_DIR, '.java-index');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

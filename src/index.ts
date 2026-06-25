@@ -5,7 +5,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import path from 'node:path';
 import yaml from 'yaml';
-import { loadConfig, saveDefaultConfig, updateConfig, showConfig, providersToFile, getDataDir, type AgentConfig } from './config.js';
+import { loadConfig, saveDefaultConfig, updateConfig, showConfig, providersToFile, getDataDir, AGENT_HOME, type AgentConfig } from './config.js';
 import { createProvider } from './providers/index.js';
 import { getAllTools } from './tools/index.js';
 import { createGateways, CLIGateway } from './gateways/index.js';
@@ -246,7 +246,7 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
     ));
 
     // ─── Session Recovery (after gateways are ready) ──────────
-    const sessionsDir = path.resolve(process.cwd(), '..', '.sessions');
+    const sessionsDir = path.join(AGENT_HOME, '.sessions');
     const activePath = path.join(sessionsDir, '.active');
     let sessionIdsToRecover: string[] = [];
 

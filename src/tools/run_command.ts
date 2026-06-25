@@ -1,6 +1,7 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
+import { WORKSPACE_DIR } from '../config.js';
 import type { Tool } from './types.js';
 
 const asyncExec = promisify(exec);
@@ -24,7 +25,7 @@ export const runCommandTool: Tool = {
     const command = args.command as string;
     const cwd = args.cwd
       ? resolve(args.cwd as string)
-      : resolve(process.cwd(), 'workspace');
+      : resolve(WORKSPACE_DIR);
 
     try {
       const { stdout, stderr } = await asyncExec(command, {

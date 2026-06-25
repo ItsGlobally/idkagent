@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import { loadConfig } from '../config.js';
+import { loadConfig, WORKSPACE_DIR, AGENT_HOME } from '../config.js';
 
 // ─── LSP Types ──────────────────────────────────────────────────
 interface JsonRpcRequest {
@@ -151,7 +151,7 @@ export async function initJdtlsIfNeeded(): Promise<void> {
   }
 
   const binPath = config.bin || 'jdtls';
-  const workspacePath = resolve(process.cwd(), 'workspace');
+  const workspacePath = resolve(WORKSPACE_DIR);
 
   const { readRegistry } = await import('./project.js');
   const registry = readRegistry();

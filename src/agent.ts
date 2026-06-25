@@ -170,7 +170,7 @@ export class Agent {
 You are in limited mode — you only have access to search, fetch, download_attachment, and analyze_image tools. You can download attachments to workspace/attachments/ and analyze images using local file paths. You do NOT have access to any file system, command execution, credential, or other developer tools.
 Your default working directory is workspace/. All relative file paths resolve there unless you specify an absolute path.`;
     } else {
-      prompt += `\n\n[System Note:
+      prompt += `\n\n[System Note]:
 1. The contents of AGENT.md, SOUL.md, and MEMORY.md have been injected into your system prompt above. You do NOT need to use the read_file tool to view them, as you already know their contents.
 2. Your default working directory is workspace/. All relative file paths resolve there unless you specify an absolute path.
 3. Use the credential tool to access stored secrets (e.g. GitHub tokens). Do NOT ask the user to paste secrets directly.
@@ -776,6 +776,7 @@ Continue the conversation naturally after assessing the situation.`;
           response = await this.providers.fallback.chat(messagesForModel, toolDefs);
         } else {
           response = await this.providers.main.chat(messagesForModel, toolDefs, onEvent);
+          this.useFallback = false;
         }
       } catch (err) {
         if (this.providers.fallback && !this.useFallback) {

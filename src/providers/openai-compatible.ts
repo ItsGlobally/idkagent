@@ -193,11 +193,19 @@ export class OpenAICompatibleProvider implements LLMProvider {
         if (msg.tool_calls && msg.tool_calls.length > 0) {
           result.toolCalls = msg.tool_calls
             .filter((tc): tc is Extract<typeof tc, { type: 'function' }> => tc.type === 'function')
-            .map((tc): ToolCall => ({
-              id: tc.id,
-              name: tc.function.name,
-              arguments: JSON.parse(tc.function.arguments || '{}'),
-            }));
+            .map((tc): ToolCall => {
+              let parsedArgs: Record<string, unknown> = {};
+              try {
+                parsedArgs = JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>;
+              } catch {
+                parsedArgs = {};
+              }
+              return {
+                id: tc.id,
+                name: tc.function.name,
+                arguments: parsedArgs,
+              };
+            });
         }
 
         return result;

@@ -197,6 +197,25 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
   const agent = new Agent({ main: mainProvider, fallback: fallbackProvider, guardrail: guardrailProvider }, tools, config);
   const queue = new MessageQueue(config.queue);
 
+  // ─── Runtime Model Update ────────────────────────────────
+  // Called when a gateway (e.g. Discord /model command) changes the active model.
+  // Rebuilds the LLM provider, updates the agent, and saves to config.
+  const updateModel = (options: { provider: string; model: string }) => {
+    try {
+      // Update the in-memory config so subsequent settings reflect the change
+      config.models.main.provider = options.provider;
+      config.models.main.model = options.model;
+
+      // Rebuild the provider and wire it into the running agent
+      const newProvider = createProvider(config, options.provider, { model: options.model, temperature: config.models.main.temperature });
+      agent.updateMainProvider(newProvider);
+
+      console.log(`🔄 Runtime model updated: ${options.model} (via ${options.provider})`);
+    } catch (err) {
+      console.error(`❌ Failed to update runtime model:`, err);
+    }
+  };
+
   console.log(`${CYAN}Starting gateway(s): ${platforms.join(', ')}...${RESET}`);
   console.log(`${CYAN}Initializing LSP servers...${RESET}`);
   await initJdtlsIfNeeded();
@@ -241,7 +260,7 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
       gw.start(
         (message, onEvent) =>
           queue.enqueue(message, (msg, ev) => agent.handleMessage(msg, ev), onEvent),
-        { cancelSession: (sessionId) => agent.cancelSession(sessionId) },
+        { cancelSession: (sessionId) => agent.cancelSession(sessionId), updateModel },
       ),
     ));
 

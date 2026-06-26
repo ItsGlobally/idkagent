@@ -198,6 +198,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   /** Estimate tokens for a message (rough heuristic: chars/4) */
   private static estimateTokens(msg: Message): number {
     let chars = msg.content ? msg.content.length : 0;
+    if (msg.thinking) chars += msg.thinking.length;
     if (msg.toolCalls) chars += JSON.stringify(msg.toolCalls).length;
     return Math.ceil(chars / 4);
   }
@@ -309,6 +310,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
         .map(msg => {
           const safeMsg: any = { role: msg.role };
           if (msg.content !== undefined) safeMsg.content = msg.content;
+          if (msg.thinking !== undefined) safeMsg.thinking = msg.thinking;
           if (msg.toolCalls !== undefined) {
             safeMsg.toolCalls = msg.toolCalls.map(tc => ({
               id: tc.id,
@@ -509,6 +511,17 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     if (queue) {
       queue.length = 0;
     }
+  }
+
+  /**
+   * Replace the main LLM provider at runtime.
+   * Used when the user changes the model via a gateway command (e.g. /model).
+   */
+  updateMainProvider(provider: LLMProvider): void {
+    this.providers.main = provider;
+    // Reset fallback flag so new provider is tried first
+    this.useFallback = false;
+    console.log(`🔄 Agent main provider updated to: ${(provider as any).model || 'unknown'}`);
   }
 
   /** Clear a session's history */
@@ -1087,7 +1100,7 @@ Continue the conversation naturally.`;
               }
             }
             onEvent({ type: 'text', content: displayText });
-            messages.push({ role: 'assistant', content: text });
+            messages.push({ role: 'assistant', content: text, thinking: response.thinking });
             this.sessions.set(message.sessionId, messages);
             this.saveSession(message.sessionId);
             return;
@@ -1099,11 +1112,12 @@ Continue the conversation naturally.`;
           onEvent({ type: 'thinking', content: response.content });
         }
 
-        // Add assistant message with tool calls
+        // Add assistant message with tool calls (include thinking for provider round-trip compliance)
         messages.push({
           role: 'assistant',
           content: response.content || undefined,
           toolCalls: response.toolCalls,
+          thinking: response.thinking,
         });
 
         // Execute each tool call
@@ -1186,7 +1200,7 @@ Continue the conversation naturally.`;
       onEvent({ type: 'text', content: displayText });
 
       // Persist only the clean response (without token line) to session history
-      messages.push({ role: 'assistant', content: text });
+      messages.push({ role: 'assistant', content: text, thinking: response.thinking });
       this.sessions.set(message.sessionId, messages);
       this.saveSession(message.sessionId);
 

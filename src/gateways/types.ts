@@ -1,8 +1,18 @@
 // ─── Gateway Types ───────────────────────────────────────────
 
+export interface UpdateModelOptions {
+  provider: string;
+  model: string;
+}
+
 export interface GatewayStartOptions {
   /** Called when a user wants to stop/cancel the current conversation for a given session */
   cancelSession?: (sessionId: string) => void;
+  /**
+   * Called when a gateway wants to change the active model at runtime (e.g. /model command).
+   * Implementations should update config, rebuild the LLM provider, and wire it into the agent.
+   */
+  updateModel?: (options: UpdateModelOptions) => void;
 }
 
 export interface GatewayMessage {

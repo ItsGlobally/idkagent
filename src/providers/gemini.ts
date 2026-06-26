@@ -113,28 +113,31 @@ function toGeminiMessages(messages: Message[]): {
         break;
 
       case 'assistant': {
-        if (msg.toolCalls && msg.toolCalls.length > 0) {
-          contents.push({
-            role: 'model',
-            parts: msg.toolCalls.map((tc) => {
-              const part: any = {
-                functionCall: {
-                  name: tc.name,
-                  args: tc.arguments,
-                },
-              };
-              if (tc.thoughtSignature) {
-                part.thoughtSignature = tc.thoughtSignature;
-              }
-              return part;
-            }),
-          });
-        } else {
-          contents.push({
-            role: 'model',
-            parts: [{ text: msg.content ?? '' }],
-          });
+        const parts: Record<string, any>[] = [];
+        // Include thinking/reasoning content as a thought part (Gemini format)
+        if (msg.thinking) {
+          parts.push({ text: msg.thinking, thought: true });
         }
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          for (const tc of msg.toolCalls) {
+            const part: any = {
+              functionCall: {
+                name: tc.name,
+                args: tc.arguments,
+              },
+            };
+            if (tc.thoughtSignature) {
+              part.thoughtSignature = tc.thoughtSignature;
+            }
+            parts.push(part);
+          }
+        } else if (msg.content) {
+          parts.push({ text: msg.content });
+        }
+        contents.push({
+          role: 'model',
+          parts,
+        });
         break;
       }
 

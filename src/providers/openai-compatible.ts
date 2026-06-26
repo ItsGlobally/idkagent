@@ -47,21 +47,25 @@ function toOpenAIMessages(messages: Message[]): ChatCompletionMessageParam[] {
         return { role: 'user', content: msg.content ?? '' };
 
       case 'assistant': {
-        if (msg.toolCalls && msg.toolCalls.length > 0) {
-          return {
-            role: 'assistant',
-            content: msg.content ?? null,
-            tool_calls: msg.toolCalls.map((tc) => ({
-              id: tc.id,
-              type: 'function' as const,
-              function: {
-                name: tc.name,
-                arguments: JSON.stringify(tc.arguments),
-              },
-            })),
-          };
+        const asstMsg: Record<string, unknown> = {
+          role: 'assistant',
+          content: msg.content ?? (msg.toolCalls && msg.toolCalls.length > 0 ? null : ''),
+        };
+        // DeepSeek/some providers require reasoning_content to be passed back
+        if (msg.thinking) {
+          asstMsg.reasoning_content = msg.thinking;
         }
-        return { role: 'assistant', content: msg.content ?? '' };
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          asstMsg.tool_calls = msg.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.arguments),
+            },
+          }));
+        }
+        return asstMsg as any;
       }
 
       case 'tool':

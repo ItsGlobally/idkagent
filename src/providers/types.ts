@@ -18,6 +18,8 @@ export interface Message {
   content?: string;
   toolCalls?: ToolCall[];
   toolCallId?: string;
+  /** Thinking/reasoning content from the LLM (e.g. DeepSeek's reasoning_content, Gemini's thought) */
+  thinking?: string;
 }
 
 export interface LLMResponse {

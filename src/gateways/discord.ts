@@ -15,7 +15,7 @@ import {
   type ModalActionRowComponentBuilder,
   type Interaction,
 } from 'discord.js';
-import type { Gateway, GatewayStartOptions, MessageHandler, AgentEvent } from './types.js';
+import type { Gateway, GatewayStartOptions, MessageHandler, AgentEvent, UpdateModelOptions } from './types.js';
 import type { AgentConfig } from '../config.js';
 import { saveConfig } from '../config.js';
 
@@ -28,6 +28,8 @@ export class DiscordGateway implements Gateway {
   private handler!: MessageHandler;
   /** Callback to cancel a running session (bypasses the queue) */
   private cancelSession?: (sessionId: string) => void;
+  /** Callback to update the active model at runtime (e.g. /model command) */
+  private updateModel?: (options: UpdateModelOptions) => void;
   /** Per-session serial chain: each send waits for the previous one to finish */
   private sendChains: Map<string, Promise<void>> = new Map();
   /** Set to true during shutdown to prevent sends after client is destroyed */
@@ -183,6 +185,7 @@ export class DiscordGateway implements Gateway {
   async start(handler: MessageHandler, options?: GatewayStartOptions): Promise<void> {
     this.handler = handler;
     this.cancelSession = options?.cancelSession;
+    this.updateModel = options?.updateModel;
     const { token, allowedChannels } = this.config.discord;
 
     if (!token) {
@@ -284,6 +287,10 @@ export class DiscordGateway implements Gateway {
         this.config.models.main.provider = providerName;
         this.config.models.main.model = modelName;
         saveConfig(this.config);
+        // Apply the model change immediately at runtime
+        if (this.updateModel) {
+          this.updateModel({ provider: providerName, model: modelName });
+        }
 
         DiscordGateway.modelSelectionState.delete(interaction.user.id);
 
@@ -311,6 +318,10 @@ export class DiscordGateway implements Gateway {
         this.config.models.main.provider = providerName;
         this.config.models.main.model = modelName;
         saveConfig(this.config);
+        // Apply the model change immediately at runtime
+        if (this.updateModel) {
+          this.updateModel({ provider: providerName, model: modelName });
+        }
         DiscordGateway.modelSelectionState.delete(interaction.user.id);
         await interaction.reply({ content: `✅ Model updated to **${modelName}** (via \`${providerName}\`)`, components: [] });
         return;
@@ -834,6 +845,10 @@ export class DiscordGateway implements Gateway {
       this.config.models.main.provider = provider;
       this.config.models.main.model = model;
       saveConfig(this.config);
+      // Apply the model change immediately at runtime
+      if (this.updateModel) {
+        this.updateModel({ provider, model });
+      }
       await interaction.reply({ content: `✅ Model updated to **${model}** (via \`${provider}\`)`, ephemeral: false });
       return;
     }

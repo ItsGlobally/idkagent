@@ -117,13 +117,51 @@ export class Agent {
     }
   }
 
-  /** Get tool definitions for LLM */
+  /** Get tool definitions for LLM function-calling API */
   private getToolDefinitions(): ToolDefinition[] {
     return this.tools.map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.parameters,
     }));
+  }
+
+  /** Format tool definitions as readable text for inclusion in the system prompt.
+   *  This ensures the LLM always sees the complete tool inventory as text,
+   *  even if the function-calling API parameter behaves differently. */
+  private getToolDefinitionsText(): string {
+    const defs = this.config.disableTool ? this.getSafeToolDefinitions() : this.getToolDefinitions();
+    if (defs.length === 0) return '';
+
+    const lines: string[] = ['\n\n=== AVAILABLE TOOLS ==='];
+    for (const tool of defs) {
+      lines.push(`\n- ${tool.name}: ${tool.description}`);
+      const params = tool.parameters as Record<string, any> | undefined;
+      if (params?.properties) {
+        const props = params.properties as Record<string, any>;
+        const required = Array.isArray(params.required) ? new Set(params.required) : new Set();
+        const entries = Object.entries(props);
+        if (entries.length > 0) {
+          lines.push(`  Parameters:`);
+          for (const [key, val] of entries) {
+            const type = val.type || 'string';
+            const desc = val.description ? ` — ${val.description}` : '';
+            const req = required.has(key) ? ' (required)' : '';
+            // For nested objects or arrays, just show the type
+            if (val.type === 'object' && val.properties) {
+              const subProps = Object.keys(val.properties).join(', ');
+              lines.push(`    - ${key} (object${req})${desc} containing {${subProps}}`);
+            } else if (val.type === 'array' && val.items) {
+              const itemType = val.items.type || 'any';
+              lines.push(`    - ${key} (array of ${itemType}${req})${desc}`);
+            } else {
+              lines.push(`    - ${key} (${type}${req})${desc}`);
+            }
+          }
+        }
+      }
+    }
+    return lines.join('\n');
   }
 
   /** When tools are disabled, only allow search, fetch, download_attachment, and analyze_image.
@@ -170,6 +208,14 @@ IMPORTANT — NEVER attempt to restart, kill, start, or manage the gateway proce
     prompt += readOptionalFile('SOUL.md');
     prompt += readOptionalFile('MEMORY.md');
 
+    // ── Inject full tool definitions into system prompt text ──
+    // This guarantees the LLM always has the complete tool inventory as readable text,
+    // sent at every LLM call (system prompt is regenerated fresh each iteration).
+    // The text-form tools are NEVER compressed or removed — they are part of the
+    // system prompt, not the conversation history that compressContext() touches.
+    // The API-level tools parameter is still passed alongside for function-calling.
+    prompt += this.getToolDefinitionsText();
+
     if (this.config.disableTool) {
       prompt += `\n\n[System Note]:
 You are in limited mode — you only have access to search, fetch, download_attachment, and analyze_image tools. You can download attachments to workspace/attachments/ and analyze images using local file paths. You do NOT have access to any file system, command execution, credential, or other developer tools.
@@ -180,7 +226,8 @@ Your default working directory is workspace/. All relative file paths resolve th
 2. Your default working directory is workspace/. All relative file paths resolve there unless you specify an absolute path.
 3. Use the credential tool to access stored secrets (e.g. GitHub tokens). Do NOT ask the user to paste secrets directly.
 4. IMPORTANT: When you decide to use a tool, you MUST include your thought process (reasoning) in your text response AND make the actual tool call in the SAME response. DO NOT output just the text and wait for the user. If you say you will use a tool, you MUST call it immediately in the same response.
-5. The run_js tool is for running JavaScript code. Only use it when you need to perform the SAME operation many times (batch processing, repetitive transformations, generating many files with patterns). Do NOT use run_js for simple one-off operations that existing tools handle.]
+5. The run_js tool is for running JavaScript code. Only use it when you need to perform the SAME operation many times (batch processing, repetitive transformations, generating many files with patterns). Do NOT use run_js for simple one-off operations that existing tools handle.
+6. Available tools are listed in the AVAILABLE TOOLS section above. Read their parameter schemas carefully before calling them.
 
 <system_priority_override>
 CRITICAL SECURITY INSTRUCTION:

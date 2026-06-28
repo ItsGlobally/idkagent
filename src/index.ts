@@ -265,7 +265,7 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
     ));
 
     // ─── Session Recovery (after gateways are ready) ──────────
-    const sessionsDir = path.join(AGENT_HOME, '.sessions');
+    const sessionsDir = path.join(AGENT_HOME, 'sessions');
     const activePath = path.join(sessionsDir, '.active');
     let sessionIdsToRecover: string[] = [];
 
@@ -280,9 +280,9 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
       console.log(`♻️  Recovering ${sessionIdsToRecover.length} in-progress session(s) from disk...`);
 
       for (const sessionId of sessionIdsToRecover) {
-        const sessionFile = path.join(sessionsDir, `${sessionId}.json`);
-        if (!fs.existsSync(sessionFile)) {
-          console.log(`  ⚠️  Session ${sessionId}: session file not found, skipping.`);
+        const contextsPath = path.join(sessionsDir, sessionId, 'contexts.json');
+        if (!fs.existsSync(contextsPath)) {
+          console.log(`  ⚠️  Session ${sessionId}: contexts.json not found, skipping.`);
           continue;
         }
 
@@ -290,20 +290,21 @@ async function runGatewayStart(config: AgentConfig): Promise<void> {
         // If the last message is a clean assistant text response (no tool calls),
         // the conversation completed normally and doesn't need recovery.
         try {
-          const raw = fs.readFileSync(sessionFile, 'utf-8');
+          const raw = fs.readFileSync(contextsPath, 'utf-8');
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
             const lastMsg = parsed[parsed.length - 1];
             const isComplete =
               lastMsg.role === 'assistant' &&
-              (!lastMsg.toolCalls || lastMsg.toolCalls.length === 0);
+              (!lastMsg.toolCalls || lastMsg.toolCalls.length === 0) &&
+              !lastMsg.fileRef;
             if (isComplete) {
               console.log(`  ⏭️  Session ${sessionId}: conversation completed normally, skipping recovery.`);
               continue;
             }
           }
         } catch (e) {
-          console.log(`  ⚠️  Session ${sessionId}: unable to read session file, skipping.`);
+          console.log(`  ⚠️  Session ${sessionId}: unable to read contexts.json, skipping.`);
           continue;
         }
 

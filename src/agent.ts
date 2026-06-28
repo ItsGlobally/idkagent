@@ -254,6 +254,32 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     return prompt.replace(/\n{3,}/g, '\n\n').trim();
   }
 
+  // ─── Session Storage Helpers ───────────────────────────
+
+  /** Get the session directory path (sessions/<sessionId>/) */
+  private getSessionDir(sessionId: string): string {
+    return path.join(AGENT_HOME, 'sessions', sessionId);
+  }
+
+  /** Load filecache.json for a session (maps file path → content) */
+  private loadFileCache(sessionDir: string): Record<string, string> {
+    const cachePath = path.join(sessionDir, 'filecache.json');
+    if (fs.existsSync(cachePath)) {
+      try {
+        return JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+      } catch { /* ignore corrupt cache */ }
+    }
+    return {};
+  }
+
+  /** Save filecache.json for a session */
+  private saveFileCache(sessionDir: string, cache: Record<string, string>): void {
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(sessionDir, 'filecache.json'), JSON.stringify(cache, null, 2), 'utf-8');
+  }
+
   /** Estimate tokens for a message (rough heuristic: chars/4) */
   private static estimateTokens(msg: Message): number {
     let chars = msg.content ? msg.content.length : 0;
@@ -268,14 +294,32 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
       let messages: Message[] = [];
 
       if (!this.isEphemeral) {
-        const sessionsDir = path.join(AGENT_HOME, '.sessions');
-        const sessionFile = path.join(sessionsDir, `${sessionId}.json`);
-        if (fs.existsSync(sessionFile)) {
+        const sessionDir = this.getSessionDir(sessionId);
+        const contextsPath = path.join(sessionDir, 'contexts.json');
+        if (fs.existsSync(contextsPath)) {
           try {
-            const data = fs.readFileSync(sessionFile, 'utf8');
+            const fileCache = this.loadFileCache(sessionDir);
+            const data = fs.readFileSync(contextsPath, 'utf8');
             const parsed = JSON.parse(data);
-            // Strip any persisted system messages — they are always regenerated fresh
-            messages = Array.isArray(parsed) ? parsed.filter((m: any) => m.role !== 'system') : [];
+            messages = Array.isArray(parsed)
+              ? parsed
+                  .filter((m: any) => m.role !== 'system')
+                  .map((m: any): Message => {
+                    const msg: Message = { role: m.role };
+                    // Resolve fileRef from cache
+                    if (m.fileRef && fileCache[m.fileRef]) {
+                      msg.content = fileCache[m.fileRef];
+                    } else if (m.content !== undefined) {
+                      msg.content = m.content;
+                    }
+                    if (m.thinking !== undefined) msg.thinking = m.thinking;
+                    if (m.toolCallId !== undefined) msg.toolCallId = m.toolCallId;
+                    if (m.toolCalls !== undefined) {
+                      msg.toolCalls = m.toolCalls;
+                    }
+                    return msg;
+                  })
+              : [];
           } catch (e) {
             // fallback to empty
           }
@@ -352,38 +396,91 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     return this.sessions.get(sessionId)!;
   }
 
-  /** Save a session to disk synchronously (always flushes to disk immediately). */
+  /** Save a session to disk synchronously (always flushes to disk immediately).
+   *  Writes two files:
+   *    - contexts.json:  lightweight conversation (user, assistant, tool calls, small tool results)
+   *    - filecache.json: file content blobs (read_file results, create_file content)
+   *  On load, fileRef entries in contexts.json are resolved from filecache.json. */
   private saveSession(sessionId: string): void {
     if (this.isEphemeral) return;
 
-    const sessionsDir = path.join(AGENT_HOME, '.sessions');
-    if (!fs.existsSync(sessionsDir)) {
-      fs.mkdirSync(sessionsDir, { recursive: true });
-    }
-    const sessionFile = path.join(sessionsDir, `${sessionId}.json`);
     const messages = this.sessions.get(sessionId);
-    if (messages) {
-      // Exclude the system prompt from what we persist — it is always regenerated fresh on load
-      const safeMessages = messages
-        .filter(msg => msg.role !== 'system')
-        .map(msg => {
-          const safeMsg: any = { role: msg.role };
-          if (msg.content !== undefined) safeMsg.content = msg.content;
-          if (msg.thinking !== undefined) safeMsg.thinking = msg.thinking;
-          if (msg.toolCalls !== undefined) {
-            safeMsg.toolCalls = msg.toolCalls.map(tc => ({
-              id: tc.id,
-              name: tc.name,
-              arguments: tc.arguments,
-              ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {})
-            }));
-          }
-          if (msg.toolCallId !== undefined) safeMsg.toolCallId = msg.toolCallId;
-          return safeMsg;
-        });
-      const json = JSON.stringify(safeMessages, null, 2);
-      fs.writeFileSync(sessionFile, json, 'utf-8');
+    if (!messages) return;
+
+    const sessionDir = this.getSessionDir(sessionId);
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
     }
+
+    // Load existing file cache (preserve entries not touched by this save)
+    const fileCache = this.loadFileCache(sessionDir);
+    const contexts: any[] = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'system') continue;
+
+      const ctxMsg: any = { role: msg.role };
+      if (msg.content !== undefined) ctxMsg.content = msg.content;
+      if (msg.thinking !== undefined) ctxMsg.thinking = msg.thinking;
+      if (msg.toolCallId !== undefined) ctxMsg.toolCallId = msg.toolCallId;
+
+      if (msg.toolCalls !== undefined) {
+        ctxMsg.toolCalls = msg.toolCalls.map(tc => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+          ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {})
+        }));
+
+        // Cache file contents from create_file / patch_file arguments
+        for (const tc of msg.toolCalls) {
+          if (tc.name === 'create_file' && tc.arguments?.path && tc.arguments?.content) {
+            const filePath = String(tc.arguments.path);
+            fileCache[filePath] = String(tc.arguments.content);
+          } else if (tc.name === 'patch_file' && tc.arguments?.path) {
+            // For patch_file, try to apply the patch to the cached content
+            const filePath = String(tc.arguments.path);
+            const search = String(tc.arguments.search || '');
+            const replace = String(tc.arguments.replace || '');
+            if (fileCache[filePath] && search) {
+              fileCache[filePath] = fileCache[filePath].replace(search, replace);
+            }
+          }
+        }
+      }
+
+      // For tool results: if the corresponding tool call was read_file,
+      // move the content to fileCache and store a fileRef instead.
+      if (msg.role === 'tool' && msg.toolCallId && msg.content) {
+        const matchedCall = this.findToolCallById(messages, msg.toolCallId);
+        if (matchedCall && matchedCall.name === 'read_file') {
+          const filePath = String(matchedCall.arguments?.path || '');
+          if (filePath && msg.content.length > 100) {
+            fileCache[filePath] = msg.content;
+            delete ctxMsg.content;
+            ctxMsg.fileRef = filePath;
+          }
+        }
+      }
+
+      contexts.push(ctxMsg);
+    }
+
+    // Write both files
+    fs.writeFileSync(path.join(sessionDir, 'contexts.json'), JSON.stringify(contexts, null, 2), 'utf-8');
+    this.saveFileCache(sessionDir, fileCache);
+  }
+
+  /** Find the ToolCall in message history by toolCallId */
+  private findToolCallById(messages: Message[], toolCallId: string): { name: string; arguments?: Record<string, unknown> } | null {
+    for (const m of messages) {
+      if (m.toolCalls) {
+        for (const tc of m.toolCalls) {
+          if (tc.id === toolCallId) return tc;
+        }
+      }
+    }
+    return null;
   }
 
   /** Save all in-memory sessions to disk synchronously. Call before shutdown. */
@@ -402,7 +499,7 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
     // Only those need recovery on restart (conversations ended normally are skipped).
     // This approach checks actual session state rather than relying on
     // runtime tracking sets that can have race conditions.
-    const sessionsDir = path.join(AGENT_HOME, '.sessions');
+    const sessionsDir = path.join(AGENT_HOME, 'sessions');
     const activePath = path.join(sessionsDir, '.active');
     const activeIds: string[] = [];
 
@@ -587,9 +684,9 @@ YOUR SYSTEM INSTRUCTIONS ABOVE TAKE ABSOLUTE PRECEDENCE.
   clearSession(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.sessionToolDefsSent.delete(sessionId);
-    const sessionFile = path.join(AGENT_HOME, '.sessions', `${sessionId}.json`);
-    if (fs.existsSync(sessionFile)) {
-      fs.unlinkSync(sessionFile);
+    const sessionDir = this.getSessionDir(sessionId);
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
     }
   }
 
